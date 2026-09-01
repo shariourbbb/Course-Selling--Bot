@@ -438,6 +438,7 @@ class Database:
             "total_joined": total_joined,
             "total_converted": total_converted,
             "total_balance": total_balance,
+            "total_paid_out": w_stats.get("approved_amount", 0),
             "total_withdrawn": w_stats.get("approved_amount", 0)
         }
 
@@ -2340,3 +2341,19 @@ class Database:
             self._save_raw(self.settings, SETTINGS_DB)
             return True
         return False
+
+    def is_home_button_enabled(self) -> bool:
+        return self.get_setting("show_home_button", True)
+
+    def toggle_home_button(self) -> bool:
+        current = self.is_home_button_enabled()
+        self.set_setting("show_home_button", not current)
+        return not current
+
+    def is_view_all_courses_enabled(self) -> bool:
+        return self.get_setting("show_view_all_courses", True)
+
+    def toggle_view_all_courses(self) -> bool:
+        current = self.is_view_all_courses_enabled()
+        self.set_setting("show_view_all_courses", not current)
+        return not current

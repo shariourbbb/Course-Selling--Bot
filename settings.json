@@ -59,5 +59,8 @@
   "inactive_ebook_categories": [
     "TEST_EBOOK_CAT"
   ],
-  "show_view_all_courses": true
+  "show_view_all_courses": false,
+  "show_home_button": false,
+  "referral_bonus_amount": 20,
+  "referral_system_enabled": true
 }

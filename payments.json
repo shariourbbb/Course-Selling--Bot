@@ -17,12 +17,6 @@
       "number": "01XXXXXXXXX",
       "instruction": "Personal (Send Money)",
       "status": "inactive"
-    },
-    "bkash_[personal_special]*": {
-      "name": "bKash [Personal_Special]*",
-      "number": "01799999999",
-      "instruction": "Send_Money *247#",
-      "status": "active"
     }
   },
   "note": "copy trx"

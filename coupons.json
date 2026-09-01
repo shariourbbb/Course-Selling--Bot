@@ -43,5 +43,29 @@
     "expiry_date": "None",
     "used_count": 0,
     "used_by": {}
+  },
+  "ASA": {
+    "code": "ASA",
+    "discount_type": "fixed",
+    "discount_value": 20,
+    "discount": 20,
+    "min_purchase": 0,
+    "max_discount": 0,
+    "applicable_category": "All",
+    "applicable_course_id": null,
+    "applicable_course_name": null,
+    "usage_limit": 30,
+    "uses": 30,
+    "per_user_limit": 1,
+    "first_order_only": false,
+    "status": "active",
+    "enable_referral_reward": false,
+    "reward_user_id": null,
+    "reward_type": "fixed",
+    "reward_amount": 0,
+    "start_date": "2026-09-01",
+    "expiry_date": "None",
+    "used_count": 0,
+    "used_by": {}
   }
 }

@@ -23,7 +23,8 @@
     "joined_date": "2026-08-31 01:27:09.151189",
     "access_links": {
       "COURSE-1788158992": "https://t.me/+p8KOw5ezWIQyZDE1"
-    }
+    },
+    "referral_reward_claimed": false
   },
   "8167080297": {
     "user_id": 8167080297,
@@ -37,7 +38,8 @@
     "referral_count": 0,
     "referred_users": [],
     "referred_by": null,
-    "joined_date": "2026-08-31 01:54:40.628272"
+    "joined_date": "2026-08-31 01:54:40.628272",
+    "referral_reward_claimed": false
   },
   "6353597308": {
     "user_id": 6353597308,
@@ -53,7 +55,8 @@
     "referral_count": 0,
     "referred_users": [],
     "referred_by": null,
-    "joined_date": "2026-08-31 01:57:21.850835"
+    "joined_date": "2026-08-31 01:57:21.850835",
+    "referral_reward_claimed": false
   },
   "7610279126": {
     "user_id": 7610279126,
@@ -74,7 +77,8 @@
     "referral_count": 0,
     "referred_users": [],
     "referred_by": null,
-    "joined_date": "2026-08-31 08:25:26.791812"
+    "joined_date": "2026-08-31 08:25:26.791812",
+    "referral_reward_claimed": false
   },
   "8332445923": {
     "user_id": 8332445923,
@@ -107,6 +111,37 @@
     "referral_count": 0,
     "referred_users": [],
     "referred_by": null,
-    "joined_date": "2026-09-01 12:57:48.609888"
+    "joined_date": "2026-09-01 12:57:48.609888",
+    "referral_reward_claimed": false
+  },
+  "1852477596": {
+    "user_id": 1852477596,
+    "username": "ShariourAhmed",
+    "full_name": "{_Shariour Ahamed_}@",
+    "purchased_courses": [],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "referral_reward_claimed": false,
+    "joined_date": "2026-09-01 20:51:31.919793"
+  },
+  "7831629041": {
+    "user_id": 7831629041,
+    "username": "CODINGJAMES_X",
+    "full_name": "⟦𝗖𝗢𝗗𝗜𝗡𝗚_𝗝𝗔𝗠𝗘𝗦⟧",
+    "purchased_courses": [],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "referral_reward_claimed": false,
+    "joined_date": "2026-09-01 22:41:03.918115"
   }
 }
