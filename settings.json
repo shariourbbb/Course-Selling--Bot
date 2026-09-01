@@ -58,5 +58,6 @@
   ],
   "inactive_ebook_categories": [
     "TEST_EBOOK_CAT"
-  ]
+  ],
+  "show_view_all_courses": true
 }

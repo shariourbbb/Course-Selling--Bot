@@ -131,7 +131,7 @@
     "payment_method": "bKash",
     "trxid": "362",
     "coupon_code": "D10",
-    "status": "pending",
+    "status": "rejected",
     "date": "2026-09-01 17:02:42.953680",
     "checkout_type": "cart"
   },
@@ -148,7 +148,7 @@
     "payment_method": "bKash",
     "trxid": "11111111",
     "coupon_code": "",
-    "status": "pending",
+    "status": "rejected",
     "date": "2026-09-01 17:06:23.000535",
     "checkout_type": "single"
   }

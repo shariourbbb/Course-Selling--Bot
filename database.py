@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 from datetime import datetime
@@ -213,17 +214,64 @@ class Database:
         self._save(self.payments, PAYMENTS_DB)
 
     # ==================== USER & EARNINGS OPERATIONS ====================
-    def add_user(self, user_id: int, username: str, full_name: str, referrer_id: Optional[int] = None):
+    def is_referral_enabled(self) -> bool:
+        return self.get_setting("referral_system_enabled", True)
+
+    def toggle_referral_system(self) -> bool:
+        current = self.is_referral_enabled()
+        new_val = not current
+        self.set_setting("referral_system_enabled", new_val)
+        return new_val
+
+    def get_referral_reward_amount(self) -> int:
+        try:
+            return int(self.get_setting("referral_bonus_amount", 50))
+        except Exception:
+            return 50
+
+    def set_referral_reward_amount(self, amount: int) -> bool:
+        try:
+            val = max(0, int(amount))
+            self.set_setting("referral_bonus_amount", val)
+            return True
+        except Exception:
+            return False
+
+    def add_user(self, user_id: int, username: str, full_name: str, referrer_id: Optional[int] = None) -> Tuple[bool, Optional[int]]:
+        """
+        Adds or updates a user.
+        Returns (is_new_user, valid_referrer_id_if_any)
+        """
         uid = str(user_id)
+        is_new = False
+        valid_referrer = None
+
         if uid not in self.users:
-            ref_by = None
-            if referrer_id and str(referrer_id) in self.users and referrer_id != user_id:
-                ref_by = referrer_id
+            is_new = True
+            if referrer_id and str(referrer_id) in self.users and referrer_id != user_id and self.is_referral_enabled():
+                valid_referrer = referrer_id
                 ref_uid = str(referrer_id)
-                self.users[ref_uid]["referral_count"] = self.users[ref_uid].get("referral_count", 0) + 1
                 if "referred_users" not in self.users[ref_uid]:
                     self.users[ref_uid]["referred_users"] = []
-                self.users[ref_uid]["referred_users"].append(user_id)
+                
+                # Check if this user was already recorded
+                already_in = False
+                for r_item in self.users[ref_uid]["referred_users"]:
+                    if isinstance(r_item, dict) and r_item.get("user_id") == user_id:
+                        already_in = True
+                        break
+                    elif isinstance(r_item, int) and r_item == user_id:
+                        already_in = True
+                        break
+                
+                if not already_in:
+                    self.users[ref_uid]["referred_users"].append({
+                        "user_id": user_id,
+                        "username": username or "",
+                        "full_name": full_name or "",
+                        "joined_date": str(datetime.now()),
+                        "converted": False
+                    })
 
             self.users[uid] = {
                 "user_id": user_id,
@@ -236,10 +284,12 @@ class Database:
                 "earnings_history": [],
                 "referral_count": 0,
                 "referred_users": [],
-                "referred_by": ref_by,
+                "referred_by": valid_referrer,
+                "referral_reward_claimed": False,
                 "joined_date": str(datetime.now())
             }
             self._save(self.users, USERS_DB)
+            return is_new, valid_referrer
         else:
             updated = False
             if username and self.users[uid].get("username") != username:
@@ -263,8 +313,169 @@ class Database:
             if "referred_users" not in self.users[uid]:
                 self.users[uid]["referred_users"] = []
                 updated = True
+            if "referral_reward_claimed" not in self.users[uid]:
+                self.users[uid]["referral_reward_claimed"] = False
+                updated = True
             if updated:
                 self._save(self.users, USERS_DB)
+            return False, None
+
+    def process_paid_referral_conversion(self, buyer_id: int, order_id: str = "N/A", course_name: str = "") -> Tuple[bool, Optional[int], int, int]:
+        """
+        Triggered when a referred student buys a paid course.
+        Credits the referrer's referral_count, balance, earnings_history, and marks conversion.
+        Returns (converted, referrer_id, reward_amount, new_referrer_balance)
+        """
+        uid = str(buyer_id)
+        if uid not in self.users:
+            return False, None, 0, 0
+
+        # If an order is found and it is free (0 BDT), do not convert
+        order = self.get_order(order_id)
+        if order:
+            try:
+                if int(order.get("amount", 0)) <= 0:
+                    return False, None, 0, 0
+            except Exception:
+                pass
+
+        buyer = self.users[uid]
+        referrer_id = buyer.get("referred_by")
+        if not referrer_id or buyer.get("referral_reward_claimed"):
+            return False, None, 0, 0
+
+        if not self.is_referral_enabled():
+            return False, None, 0, 0
+
+        ref_uid = str(referrer_id)
+        if ref_uid not in self.users:
+            return False, None, 0, 0
+
+        # Mark buyer as claimed
+        buyer["referral_reward_claimed"] = True
+
+        referrer = self.users[ref_uid]
+        referrer["referral_count"] = referrer.get("referral_count", 0) + 1
+        reward_amount = self.get_referral_reward_amount()
+
+        # Update entry in referrer's referred_users list
+        ref_list = referrer.get("referred_users", [])
+        updated_list = []
+        found = False
+        for item in ref_list:
+            if isinstance(item, dict) and item.get("user_id") == buyer_id:
+                item["converted"] = True
+                item["conversion_date"] = str(datetime.now())
+                item["course_name"] = course_name
+                item["order_id"] = order_id
+                updated_list.append(item)
+                found = True
+            elif isinstance(item, int) and item == buyer_id:
+                updated_list.append({
+                    "user_id": buyer_id,
+                    "username": buyer.get("username", ""),
+                    "full_name": buyer.get("full_name", ""),
+                    "joined_date": buyer.get("joined_date", ""),
+                    "converted": True,
+                    "conversion_date": str(datetime.now()),
+                    "course_name": course_name,
+                    "order_id": order_id
+                })
+                found = True
+            else:
+                updated_list.append(item)
+
+        if not found:
+            updated_list.append({
+                "user_id": buyer_id,
+                "username": buyer.get("username", ""),
+                "full_name": buyer.get("full_name", ""),
+                "joined_date": buyer.get("joined_date", ""),
+                "converted": True,
+                "conversion_date": str(datetime.now()),
+                "course_name": course_name,
+                "order_id": order_id
+            })
+
+        # Add earnings & balance (without auto-enabling cash withdrawals)
+        referrer["balance"] = referrer.get("balance", 0) + reward_amount
+        if "earnings_history" not in referrer:
+            referrer["earnings_history"] = []
+        referrer["earnings_history"].append({
+            "amount": reward_amount,
+            "coupon_code": "REFERRAL_BONUS",
+            "order_id": str(order_id),
+            "date": str(datetime.now())
+        })
+
+        self._save(self.users, USERS_DB)
+        return True, referrer_id, reward_amount, referrer["balance"]
+
+    def get_referral_global_stats(self) -> dict:
+        total_referrers = 0
+        total_joined = 0
+        total_converted = 0
+        total_balance = 0
+
+        for uid, u in self.users.items():
+            ref_c = u.get("referral_count", 0)
+            bal = u.get("balance", 0)
+            refs = u.get("referred_users", [])
+            
+            if ref_c > 0 or bal > 0 or len(refs) > 0:
+                total_referrers += 1
+
+            total_joined += len(refs)
+            total_converted += ref_c
+            total_balance += bal
+
+        w_stats = self.get_withdrawal_stats()
+
+        return {
+            "is_enabled": self.is_referral_enabled(),
+            "bonus_amount": self.get_referral_reward_amount(),
+            "total_referrers": total_referrers,
+            "total_joined": total_joined,
+            "total_converted": total_converted,
+            "total_balance": total_balance,
+            "total_withdrawn": w_stats.get("approved_amount", 0)
+        }
+
+    def get_all_referrers_list(self) -> List[dict]:
+        referrers = []
+        for uid, u in self.users.items():
+            ref_c = u.get("referral_count", 0)
+            bal = u.get("balance", 0)
+            refs = u.get("referred_users", [])
+            if ref_c > 0 or bal > 0 or len(refs) > 0:
+                u_copy = dict(u)
+                u_copy["user_id"] = int(uid)
+                referrers.append(u_copy)
+
+        referrers.sort(key=lambda x: (x.get("referral_count", 0), x.get("balance", 0), len(x.get("referred_users", []))), reverse=True)
+        return referrers
+
+    def get_paginated_referrers(self, page: int = 1, per_page: int = 8) -> Tuple[List[dict], int]:
+        all_refs = self.get_all_referrers_list()
+        total = len(all_refs)
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        return all_refs[start_idx:end_idx], total_pages
+
+    def search_referral_users(self, query: str) -> List[dict]:
+        q = query.strip().lower()
+        if not q:
+            return []
+        matched = []
+        for uid, u in self.users.items():
+            uname = str(u.get("username", "")).lower()
+            fname = str(u.get("full_name", "")).lower()
+            if q == str(uid) or q in uname or q in fname:
+                u_copy = dict(u)
+                u_copy["user_id"] = int(uid)
+                matched.append(u_copy)
+        return matched
 
     def get_user(self, user_id: int) -> Optional[dict]:
         return self.users.get(str(user_id))
@@ -311,7 +522,6 @@ class Database:
         if uid in self.users:
             user = self.users[uid]
             user["balance"] = user.get("balance", 0) + int(amount)
-            user["earnings_enabled"] = True
             if "earnings_history" not in user:
                 user["earnings_history"] = []
             user["earnings_history"].append({
@@ -1819,6 +2029,67 @@ class Database:
                 result.append(w_copy)
         result.sort(key=lambda x: x.get("date", ""), reverse=True)
         return result
+
+    def get_all_withdrawals(self, status: Optional[str] = None) -> List[dict]:
+        result = []
+        for wid, w in self.withdrawals.items():
+            if status and status != "all":
+                if w.get("status") != status:
+                    continue
+            w_copy = dict(w)
+            w_copy["withdraw_id"] = wid
+            result.append(w_copy)
+        result.sort(key=lambda x: x.get("date", ""), reverse=True)
+        return result
+
+    def get_withdrawal_stats(self) -> dict:
+        all_w = list(self.withdrawals.values())
+        pending_list = [w for w in all_w if w.get("status") == "pending"]
+        approved_list = [w for w in all_w if w.get("status") == "approved"]
+        rejected_list = [w for w in all_w if w.get("status") == "rejected"]
+
+        pending_amt = sum(w.get("amount", 0) for w in pending_list)
+        approved_amt = sum(w.get("amount", 0) for w in approved_list)
+        rejected_amt = sum(w.get("amount", 0) for w in rejected_list)
+        total_amt = pending_amt + approved_amt
+
+        return {
+            "total_count": len(all_w),
+            "total_amount": total_amt,
+            "pending_count": len(pending_list),
+            "pending_amount": pending_amt,
+            "approved_count": len(approved_list),
+            "approved_amount": approved_amt,
+            "rejected_count": len(rejected_list),
+            "rejected_amount": rejected_amt,
+        }
+
+    def get_paginated_withdrawals(self, status: Optional[str] = None, page: int = 1, per_page: int = 6) -> Tuple[List[dict], int]:
+        all_items = self.get_all_withdrawals(status=status)
+        total_count = len(all_items)
+        total_pages = max(1, math.ceil(total_count / per_page))
+        current_page = max(1, min(page, total_pages))
+        start_idx = (current_page - 1) * per_page
+        end_idx = start_idx + per_page
+        return all_items[start_idx:end_idx], total_pages
+
+    def search_withdrawals(self, query: str) -> List[dict]:
+        q = query.strip().lower()
+        if not q:
+            return []
+        found = []
+        for wid, w in self.withdrawals.items():
+            w_user = str(w.get("user_id", "")).lower()
+            w_name = str(w.get("full_name", "")).lower()
+            w_uname = str(w.get("username", "")).lower()
+            w_acc = str(w.get("account", "")).lower()
+            w_meth = str(w.get("method", "")).lower()
+            if q in wid.lower() or q in w_user or q in w_name or q in w_uname or q in w_acc or q in w_meth:
+                w_copy = dict(w)
+                w_copy["withdraw_id"] = wid
+                found.append(w_copy)
+        found.sort(key=lambda x: x.get("date", ""), reverse=True)
+        return found
 
     def approve_withdrawal(self, withdraw_id: str) -> bool:
         w = self.get_withdrawal(withdraw_id)

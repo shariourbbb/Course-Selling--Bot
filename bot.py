@@ -350,7 +350,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await send_course_details(update.message, context, course, user.id)
                 return
 
-    db.add_user(user.id, user.username or "", user.full_name, referrer_id=referrer_id)
+    is_new, valid_ref = db.add_user(user.id, user.username or "", user.full_name, referrer_id=referrer_id)
+
+    if is_new and valid_ref:
+        try:
+            student_name = user.full_name or f"@{user.username}" if user.username else f"User {user.id}"
+            uname_tag = f" (@{user.username})" if user.username else ""
+            reward_amt = db.get_referral_reward_amount()
+            await context.bot.send_message(
+                valid_ref,
+                f"""🎉 <b>নতুন রেফারেল জয়েন!</b>
+━━━━━━━━━━━━━━━━━━━━
+👤 <b>শিক্ষার্থী:</b> {html.escape(student_name)}{uname_tag}
+🆔 <b>User ID:</b> <code>{user.id}</code>
+
+💡 <i>এই শিক্ষার্থী যখন কোনো পেইড কোর্স ক্রয় করবেন, তখন আপনার অ্যাকাউন্টে ৳{reward_amt} BDT রেফারেল বোনাস যুক্ত হবে।</i>""",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send referral join notification: {e}")
 
     if not ADMIN_IDS and user.id not in ADMIN_IDS:
         ADMIN_IDS.append(user.id)
@@ -720,6 +738,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     purchased_ebooks = user_data.get("purchased_ebooks", [])
     orders = db.get_user_orders(user.id)
     total_spent = sum(o.get("amount", 0) for o in orders if o.get("status") == "approved")
+    wallet_balance = user_data.get("balance", 0)
 
     name = user.first_name or 'User'
     msg = f"""Hi, **{name}** 👋
@@ -729,6 +748,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🎓 **Courses:** {len(purchased_courses)}
 📚 **E-Books:** {len(purchased_ebooks)}
+💰 **Wallet Balance:** ৳{wallet_balance} BDT
 💳 **Total Spent:** ৳{total_spent} BDT"""
 
     keyboard = [
@@ -736,7 +756,8 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🧾 Order History", callback_data="my_orders_history"), InlineKeyboardButton("🎁 Refer & Earn", callback_data="my_refer_nav")]
     ]
 
-    if db.is_earnings_enabled(user.id) or user_data.get("balance", 0) > 0:
+    # Show Earnings & Withdraw button ONLY to users with earnings_enabled explicitly turned on by Admin
+    if db.is_earnings_enabled(user.id):
         keyboard.append([InlineKeyboardButton("💰 Earnings & Withdraw", callback_data="my_earnings_nav")])
 
     keyboard.append([InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")])
@@ -760,31 +781,45 @@ async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user.id}"
     user_data = db.get_user(user.id) or {}
     ref_count = user_data.get("referral_count", 0)
+    bonus_amount = db.get_referral_reward_amount()
+    is_enabled = db.is_referral_enabled()
 
-    msg = f"""🎁 **রেফার ও ইনকাম (Refer & Earn)**
+    if not is_enabled:
+        msg = """🎁 <b>রেফার ও ইনকাম (Refer & Earn)</b>
+━━━━━━━━━━━━━━━━━━━━
 
-বন্ধুদের সাথে শেয়ার করুন এবং প্রতিটি সফল রেফারে আকর্ষণীয় বোনাস উপভোগ করুন!
+⚠️ <i>রেফারেল ও রিওয়ার্ড প্রোগ্রামটি বর্তমানে সাময়িকভাবে স্থগিত রয়েছে। এডমিন এটি পুনরায় চালু করলে আপনি রেফারেল বোনাস উপভোগ করতে পারবেন।</i>"""
+        keyboard = [
+            [InlineKeyboardButton("◀️ Profile", callback_data="profile_nav"), InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")]
+        ]
+    else:
+        msg = f"""🎁 <b>রেফার ও ইনকাম (Refer & Earn)</b>
+━━━━━━━━━━━━━━━━━━━━
 
-👥 **মোট সফল রেফার:** `{ref_count}` জন
+বন্ধুদের সাথে শেয়ার করুন এবং আপনার লিংকের মাধ্যমে কেউ পেইড কোর্স কিনলেই পেয়ে যান প্রতি রেফারে <b>৳{bonus_amount} BDT</b> বোনাস!
 
-🔗 **আপনার রেফারেল লিংক:**
-`{ref_link}`"""
+👥 <b>সফল পেইড রেফারেল:</b> <code>{ref_count}</code> জন
+💰 <b>প্রতি রেফারে বোনাস:</b> <code>৳{bonus_amount} BDT</code>
 
-    keyboard = [
-        [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={ref_link}&text=StudyMart - Best Academic & Admission Courses:")],
-        [InlineKeyboardButton("◀️ Profile", callback_data="profile_nav"), InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")]
-    ]
+🔗 <b>আপনার রেফারেল লিংক:</b>
+<code>{ref_link}</code>"""
+
+        keyboard = [
+            [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={ref_link}&text=StudyMart - Best Academic & Admission Courses:")],
+            [InlineKeyboardButton("◀️ Profile", callback_data="profile_nav"), InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")]
+        ]
+
     if update.callback_query:
         if update.callback_query.message.photo:
             try:
                 await update.callback_query.message.delete()
             except Exception:
                 pass
-            await update.callback_query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.callback_query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ==================== EARNINGS & WITHDRAW DASHBOARD ====================
@@ -793,6 +828,30 @@ async def show_earnings_dashboard(update: Update, context: ContextTypes.DEFAULT_
     user = update.effective_user
     user_data = db.get_user(user.id) or {}
     balance = user_data.get("balance", 0)
+
+    if not db.is_earnings_enabled(user.id):
+        msg = f"""💰 <b>ওয়ালেট ব্যালেন্স (Wallet Balance)</b>
+━━━━━━━━━━━━━━━━━━━━
+
+💳 <b>আপনার বর্তমান ব্যালেন্স:</b> <code>৳{balance} BDT</code>
+
+💡 <i>আপনার অর্জিত ব্যালেন্স দিয়ে আপনি বটের যেকোনো কোর্স বা ই-বুক সরাসরি ক্রয় করতে পারবেন। ক্যাশ উত্তোলন সুবিধা শুধুমাত্র অনুমোদিত ব্যবহারকারীদের জন্য।</i>"""
+        keyboard = [
+            [InlineKeyboardButton("🎓 কোর্স ব্রাউজ করুন", callback_data="browse_categories")],
+            [InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")]
+        ]
+        if update.callback_query:
+            if update.callback_query.message.photo:
+                try:
+                    await update.callback_query.message.delete()
+                except Exception:
+                    pass
+                await update.callback_query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
 
     msg = f"""💰 **উপার্জন ও উত্তোলন ড্যাশবোর্ড (Earnings)**
 
@@ -871,6 +930,10 @@ async def show_withdrawal_history(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def start_withdraw_flow(query, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    if not db.is_earnings_enabled(user_id):
+        await query.answer("⚠️ আপনার অ্যাকাউন্টে ক্যাশ উত্তোলন সুবিধা সক্রিয় নেই। ব্যালেন্স দিয়ে যেকোনো কোর্স বা ই-বুক সরাসরি কিনতে পারবেন।", show_alert=True)
+        return
+
     user_data = db.get_user(user_id) or {}
     balance = user_data.get("balance", 0)
 
@@ -1706,8 +1769,17 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
         
         context.user_data["checkout_total"] = total
 
+        user_bal = (db.get_user(user_id) or {}).get("balance", 0)
         methods = db.get_payment_methods(active_only=True)
         keyboard = []
+
+        if user_bal >= total and total > 0:
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"💰 Pay with Wallet Balance (৳{user_bal})",
+                    callback_data="pay_wallet_balance"
+                )
+            ])
 
         for method in methods:
             m_key = method['key'].lower()
@@ -1727,6 +1799,7 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
         keyboard.append([InlineKeyboardButton("◀️ Back", callback_data="cancel_buy")])
 
         items_list = "\n".join([f"•  <b>{html.escape(i['name'])}</b> — ৳{i['price']}" for i in items])
+        bal_info = f"\n💰 <b>Wallet Balance:</b> ৳{user_bal} BDT" if user_bal > 0 else ""
 
         if discount_val > 0:
             msg = f"""💳 <b>Select payment method:</b>
@@ -1736,14 +1809,14 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
 
 💰 <b>Price:</b> ৳{original_total}
 🎟 <b>Coupon Discount:</b> -৳{discount_val}
-✅ <b>Total:</b> ৳{total}"""
+✅ <b>Total:</b> ৳{total}{bal_info}"""
         else:
             msg = f"""💳 <b>Select payment method:</b>
 
 📦 <b>Cart Items ({len(items)} Courses):</b>
 {items_list}
 
-💰 <b>Total:</b> ৳{total}"""
+💰 <b>Total:</b> ৳{total}{bal_info}"""
 
         course_image = items[0].get("image") if items else None
         await send_rich_course_message(query, msg, InlineKeyboardMarkup(keyboard), image=course_image, is_edit=True)
@@ -1838,13 +1911,24 @@ Enter your code to claim your discount."""
         if not eb:
             return
             
+        total = eb["price"]
         context.user_data["checkout_type"] = "ebook"
         context.user_data["checkout_course"] = eb_id
         context.user_data["checkout_course_name"] = eb["name"]
-        context.user_data["checkout_total"] = eb["price"]
+        context.user_data["checkout_total"] = total
         
+        user_bal = (db.get_user(user_id) or {}).get("balance", 0)
         methods = db.get_payment_methods(active_only=True)
         keyboard = []
+
+        if user_bal >= total and total > 0:
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"💰 Pay with Wallet Balance (৳{user_bal})",
+                    callback_data="pay_wallet_balance"
+                )
+            ])
+
         for method in methods:
             m_key = method['key'].lower()
             emoji = "💗" if "bkash" in m_key else "🟠" if "nagad" in m_key else "🟣" if "rocket" in m_key else "💳"
@@ -1856,11 +1940,12 @@ Enter your code to claim your discount."""
             ])
         keyboard.append([InlineKeyboardButton("◀️ Back", callback_data=f"view_eb_{eb_id}")])
         
+        bal_info = f"\n💰 <b>Wallet Balance:</b> ৳{user_bal} BDT" if user_bal > 0 else ""
         msg = f"""💳 <b>Select payment method:</b>
 
 📘 <b>E-Book:</b> {eb['name']}
 💰 <b>Price:</b> ৳{eb['price']}
-✅ <b>Total:</b> ৳{eb['price']}"""
+✅ <b>Total:</b> ৳{eb['price']}{bal_info}"""
 
         await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         return
@@ -1877,8 +1962,18 @@ Enter your code to claim your discount."""
         context.user_data["checkout_course_name"] = course["name"]
         context.user_data["checkout_total"] = total
 
+        user_bal = (db.get_user(user_id) or {}).get("balance", 0)
         methods = db.get_payment_methods(active_only=True)
         keyboard = []
+
+        if user_bal >= total and total > 0:
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"💰 Pay with Wallet Balance (৳{user_bal})",
+                    callback_data="pay_wallet_balance"
+                )
+            ])
+
         for method in methods:
             m_key = method['key'].lower()
             emoji = "💗" if "bkash" in m_key else "🟠" if "nagad" in m_key else "🟣" if "rocket" in m_key else "💳"
@@ -1890,6 +1985,7 @@ Enter your code to claim your discount."""
             ])
         keyboard.append([InlineKeyboardButton("◀️ Back", callback_data="cancel_buy")])
 
+        bal_info = f"\n💰 <b>Wallet Balance:</b> ৳{user_bal} BDT" if user_bal > 0 else ""
         is_coupon_active = (context.user_data.get("coupon_course") == course_id)
         if is_coupon_active:
             discount_val = course["price"] - total
@@ -1898,16 +1994,134 @@ Enter your code to claim your discount."""
 📘 <b>Course:</b> {course['name']}
 💰 <b>Price:</b> ৳{course['price']}
 🎟 <b>Coupon Discount:</b> -৳{discount_val}
-✅ <b>Total:</b> ৳{total}"""
+✅ <b>Total:</b> ৳{total}{bal_info}"""
         else:
             msg = f"""💳 <b>Select payment method:</b>
 
 📘 <b>Course:</b> {course['name']}
 💰 <b>Price:</b> ৳{course['price']}
-✅ <b>Total:</b> ৳{total}"""
+✅ <b>Total:</b> ৳{total}{bal_info}"""
 
         course_image = course.get("image")
         await send_rich_course_message(query, msg, InlineKeyboardMarkup(keyboard), image=course_image, is_edit=True)
+
+    elif data == "pay_wallet_balance":
+        user_data = db.get_user(user_id) or {}
+        user_bal = user_data.get("balance", 0)
+        total = context.user_data.get("checkout_total", 0)
+        c_type = context.user_data.get("checkout_type", "single")
+        applied_coupon = context.user_data.get("applied_coupon", "")
+
+        if user_bal < total:
+            await query.answer("❌ আপনার ওয়ালেটে পর্যাপ্ত ব্যালেন্স নেই!", show_alert=True)
+            return
+
+        # Deduct balance
+        deducted = db.deduct_balance(user_id, total)
+        if not deducted:
+            await query.answer("❌ ব্যালেন্স কাটতে সমস্যা হয়েছে! পুনরায় চেষ্টা করুন।", show_alert=True)
+            return
+
+        order_id = db.generate_next_order_id()
+        course_name = context.user_data.get("checkout_course_name", "Course")
+        course_id = context.user_data.get("checkout_course", "")
+        courses_in_order = context.user_data.get("checkout_courses", [course_id] if course_id else [])
+
+        order_data = {
+            "user_id": user_id,
+            "username": update.effective_user.username or "",
+            "full_name": update.effective_user.full_name or "",
+            "course_id": course_id,
+            "courses": courses_in_order,
+            "course_name": course_name,
+            "amount": total,
+            "payment_method": "Wallet Balance",
+            "trxid": f"WALLET-{user_id}",
+            "coupon_code": applied_coupon,
+            "status": "approved",
+            "date": str(datetime.now()),
+            "checkout_type": c_type
+        }
+        db.add_order(order_id, order_data)
+
+        if applied_coupon:
+            db.use_coupon(applied_coupon, user_id)
+
+        keyboard = []
+
+        if c_type == "ebook":
+            db.add_ebook_purchase(user_id, course_id)
+            eb_obj = db.get_ebook(course_id)
+            if eb_obj:
+                if eb_obj.get("file_id"):
+                    keyboard.append([InlineKeyboardButton("📥 Download (PDF)", callback_data=f"ebdl_{course_id}")])
+                elif eb_obj.get("access_link"):
+                    keyboard.append([InlineKeyboardButton("📥 Download E-Book", url=eb_obj["access_link"])])
+            keyboard.append([InlineKeyboardButton("📚 My E-Books", callback_data="my_ebooks_nav")])
+        elif c_type == "cart":
+            for cid in courses_in_order:
+                db.add_purchase(user_id, cid)
+                c_obj = db.get_course(cid)
+                if c_obj and c_obj.get("access_link"):
+                    db.store_user_access_link(user_id, cid, c_obj["access_link"])
+                    dyn_link = await get_dynamic_access_link(context.bot, c_obj["access_link"], user_id)
+                    if dyn_link:
+                        keyboard.append([InlineKeyboardButton(f"🚀 {c_obj['name']}", url=dyn_link)])
+            db.clear_cart(user_id)
+            keyboard.append([InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav")])
+        else:
+            db.add_purchase(user_id, course_id)
+            c_obj = db.get_course(course_id)
+            if c_obj and c_obj.get("access_link"):
+                db.store_user_access_link(user_id, course_id, c_obj["access_link"])
+                dyn_link = await get_dynamic_access_link(context.bot, c_obj["access_link"], user_id)
+                if dyn_link:
+                    keyboard.append([InlineKeyboardButton(f"🚀 {c_obj['name']}", url=dyn_link)])
+            keyboard.append([InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav")])
+
+        keyboard.append([InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")])
+
+        # Clean context
+        context.user_data.pop("discounted_price", None)
+        context.user_data.pop("pay_method", None)
+        context.user_data.pop("pay_amount", None)
+        context.user_data.pop("checkout_course", None)
+        context.user_data.pop("checkout_courses", None)
+        context.user_data.pop("applied_coupon", None)
+        context.user_data.pop("checkout_total", None)
+
+        remaining_bal = (db.get_user(user_id) or {}).get("balance", 0)
+
+        success_msg = f"""🎉 <b>পেমেন্ট সফল হয়েছে! (Wallet Balance)</b>
+━━━━━━━━━━━━━━━━━━━━
+
+📦 <b>Order ID:</b> <code>{format_order_id_display(order_id)}</code>
+📘 <b>আইটেম:</b> {html.escape(course_name)}
+💰 <b>পরিশোধিত মূল্য:</b> <code>৳{total} BDT</code>
+💳 <b>অবশিষ্ট ওয়ালেট ব্যালেন্স:</b> <code>৳{remaining_bal} BDT</code>
+
+✅ <i>আপনার কোর্স/ই-বুক সরাসরি সক্রিয় করা হয়েছে। নিচের বাটনে চাপ দিয়ে ক্লাসে যুক্ত হোন!</i>"""
+
+        if query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.message.reply_text(success_msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.edit_message_text(success_msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+        # Notify admins
+        for aid in ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    aid,
+                    f"""🔔 <b>New Wallet Purchase Order!</b>\n━━━━━━━━━━━━━━━━━━━━\n📦 <b>Order:</b> <code>{format_order_id_display(order_id)}</code>\n👤 <b>User:</b> {html.escape(update.effective_user.full_name or 'User')} (<code>{user_id}</code>)\n📘 <b>Item:</b> {html.escape(course_name)}\n💰 <b>Amount:</b> <code>৳{total} BDT</code> (Wallet Auto-Approved)""",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+        return
 
     elif data.startswith("pay_"):
         method_key = data.replace("pay_", "")
@@ -3565,6 +3779,134 @@ Here is the current ReplyKeyboardMarkup layout. (Buttons with 👑 are Admin-onl
     await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+# ==================== ADMIN REFERRALS MANAGEMENT HUB ====================
+
+async def render_admin_referrals_hub(query, context):
+    stats = db.get_referral_global_stats()
+    is_enabled = stats["is_enabled"]
+    bonus_amt = stats["bonus_amount"]
+    st_text = "🟢 Enabled (Active)" if is_enabled else "🔴 Disabled (Paused)"
+    st_btn_text = "🔴 Pause Referral System" if is_enabled else "🟢 Enable Referral System"
+
+    msg = f"""<blockquote>🎁 <b>[ Refer & Earn Management Hub ]</b></blockquote>
+
+<blockquote>⚙️ <b>System Settings:</b>
+• <b>System Status:</b> <b>{st_text}</b>
+• <b>Bonus Per Referral:</b> <code>৳{bonus_amt} BDT</code>
+• <b>Conversion Trigger:</b> <i>পেইড কোর্স অর্ডার অনুমোদন (Paid Purchase Approval)</i></blockquote>
+
+<blockquote>📊 <b>Global Referral Statistics:</b>
+• <b>Total Referrers:</b> <code>{stats['total_referrers']}</code> users
+• <b>Total Joined via Links:</b> <code>{stats['total_joined']}</code> students
+• <b>Successful Paid Referrals:</b> <code>{stats['total_converted']}</code> conversions
+• <b>Total Referral Bonus Paid:</b> <code>৳{stats['total_paid_out']} BDT</code>
+• <b>Total User Balance Held:</b> <code>৳{stats['total_balance']} BDT</code></blockquote>
+
+<blockquote>👇 <b>Admin Control Options:</b></blockquote>"""
+
+    keyboard = [
+        [InlineKeyboardButton(st_btn_text, callback_data="adm_tog_referral")],
+        [InlineKeyboardButton("💵 Set Bonus Amount", callback_data="adm_ref_set_bonus")],
+        [InlineKeyboardButton("📋 Referrers & Balances List", callback_data="adm_reflist_1")],
+        [InlineKeyboardButton("🔍 Search Referrals", callback_data="adm_ref_search")],
+        [InlineKeyboardButton("« Coupons & Rewards Hub", callback_data="adm_coupons")]
+    ]
+    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def render_admin_referrers_list(query, context, page: int = 1):
+    per_page = 8
+    referrers, total_pages, total_count = db.get_paginated_referrers(page=page, per_page=per_page)
+
+    msg = f"""<blockquote>👥 <b>[ Referrers & Balances Leaderboard ]</b></blockquote>
+<blockquote>📌 <b>Total Referrers:</b> <code>{total_count}</code> | <b>Page:</b> <code>{page}/{max(1, total_pages)}</code></blockquote>
+
+"""
+    if not referrers:
+        msg += "<i>বর্তমানে কোনো রেফারেলের রেকর্ড নেই।</i>\n"
+
+    keyboard = []
+    for u in referrers:
+        uid = u["user_id"]
+        uname = u.get("full_name") or u.get("username") or f"User {uid}"
+        ref_c = u.get("referral_count", 0)
+        bal = u.get("balance", 0)
+        earn_st = "🟢" if u.get("earnings_enabled") else "⚪"
+        keyboard.append([
+            InlineKeyboardButton(f"{earn_st} {uname[:15]} — 👥 {ref_c} | 💰 ৳{bal}", callback_data=f"adm_refuview_{uid}")
+        ])
+
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"adm_reflist_{page - 1}"))
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"adm_reflist_{page + 1}"))
+    if nav_row:
+        keyboard.append(nav_row)
+
+    keyboard.append([
+        InlineKeyboardButton("🔍 Search User", callback_data="adm_ref_search"),
+        InlineKeyboardButton("« Referrals Hub", callback_data="adm_referrals")
+    ])
+
+    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def render_admin_referral_user_view(query, context, user_id: int):
+    u = db.get_user(user_id)
+    if not u:
+        await query.answer("User not found!", show_alert=True)
+        return
+
+    full_name = u.get("full_name") or "N/A"
+    username = f"@{u['username']}" if u.get("username") else "N/A"
+    ref_count = u.get("referral_count", 0)
+    bal = u.get("balance", 0)
+    joined_date = u.get("joined_date", "")[:16]
+    referred_by = u.get("referred_by")
+    ref_by_text = f"<code>{referred_by}</code>" if referred_by else "<i>Direct / None</i>"
+    is_earn = "🟢 Enabled" if u.get("earnings_enabled") else "🔴 Disabled"
+
+    referred_list = u.get("referred_users", [])
+    total_joined = len(referred_list)
+    total_converted = sum(1 for item in referred_list if isinstance(item, dict) and item.get("converted"))
+
+    msg = f"""<blockquote>👤 <b>[ User Referral Profile ]</b></blockquote>
+
+<blockquote>🆔 <b>User ID:</b> <code>{user_id}</code>
+👤 <b>Name:</b> <b>{html.escape(full_name)}</b>
+🔗 <b>Username:</b> {username}
+📅 <b>Joined:</b> <code>{joined_date}</code>
+🤝 <b>Referred By:</b> {ref_by_text}</blockquote>
+
+<blockquote>💰 <b>Referral & Wallet Stats:</b>
+• <b>Successful Paid Referrals:</b> <code>{ref_count}</code>
+• <b>Total Joined via Link:</b> <code>{total_joined}</code>
+• <b>Paid Conversions:</b> <code>{total_converted}</code>
+• <b>Current Wallet Balance:</b> <code>৳{bal} BDT</code>
+• <b>Cash Withdraw Permission:</b> <b>{is_earn}</b></blockquote>
+
+<blockquote>👥 <b>Referred Students List:</b></blockquote>"""
+
+    if not referred_list:
+        msg += "\n<i>এই ইউজারের লিংকে এখনও কেউ জয়েন করেনি।</i>"
+    else:
+        for idx, ref_item in enumerate(referred_list[-8:], 1):
+            if isinstance(ref_item, dict):
+                r_uid = ref_item.get("user_id")
+                r_name = ref_item.get("full_name") or ref_item.get("username") or str(r_uid)
+                r_conv = "🟢 Paid" if ref_item.get("converted") else "🟡 Joined"
+                msg += f"\n{idx}. <b>{html.escape(r_name)}</b> (<code>{r_uid}</code>) — {r_conv}"
+            else:
+                msg += f"\n{idx}. <code>{ref_item}</code>"
+
+    keyboard = [
+        [InlineKeyboardButton("👤 Open Full User Profile", callback_data=f"adm_uview_{user_id}")],
+        [InlineKeyboardButton("📋 Back to Referrers List", callback_data="adm_reflist_1"), InlineKeyboardButton("« Referrals Hub", callback_data="adm_referrals")]
+    ]
+    await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
 async def prompt_add_kb_row(query, context):
     custom_kb = db.get_custom_keyboards()
     keyboard = []
@@ -3726,12 +4068,15 @@ def check_admin_callback_permission(user_id: int, data: str) -> tuple[bool, str]
         if not db.has_permission(user_id, "orders"):
             return False, "Order Management"
 
-    # Coupons
+    # Coupons & Referral Hub
     if (data.startswith("adm_coupon") or data.startswith("adm_add_coupon") or 
         data.startswith("adm_del_coupon_") or data.startswith("adm_tog_coupon_") or 
-        data.startswith("cpnwiz_")):
-        if not db.has_permission(user_id, "coupon"):
-            return False, "Coupon Management"
+        data.startswith("cpnwiz_") or data.startswith("adm_referrals") or 
+        data.startswith("adm_tog_referral") or data.startswith("adm_reflist_") or 
+        data.startswith("adm_refuview_") or data.startswith("adm_ref_search") or 
+        data.startswith("adm_ref_set_bonus")):
+        if not (db.has_permission(user_id, "coupon") or db.has_permission(user_id, "user_manage")):
+            return False, "Coupon & Referral Management"
 
     # Payments & Withdrawals
     if (data.startswith("adm_payments") or data.startswith("adm_withdrawals") or 
@@ -7043,6 +7388,36 @@ Choose how you want to broadcast:
             except Exception as e:
                 logger.error(f"ইউজারকে নোটিফিকেশন পাঠাতে সমস্যা: {e}")
 
+            # Paid Referral Bonus Conversion
+            try:
+                order_amount = int(order.get("amount", 0))
+            except Exception:
+                order_amount = 0
+
+            if order_amount > 0:
+                conv_success, referrer_id, reward_amt, new_bal = db.process_paid_referral_conversion(
+                    buyer_id=order["user_id"],
+                    order_id=order_id,
+                    course_name=order.get("course_name", "Paid Course")
+                )
+                if conv_success and referrer_id:
+                    try:
+                        await context.bot.send_message(
+                            referrer_id,
+                            f"""🎁 <b>রেফারেল বোনাস অর্জিত হয়েছে!</b>
+━━━━━━━━━━━━━━━━━━━━
+👤 আপনার রেফারেল লিংকে যুক্ত শিক্ষার্থী একটি পেইড কোর্স সফলভাবে ক্রয় করেছেন!
+
+📦 <b>Order ID:</b> <code>{format_order_id_display(order_id)}</code>
+💰 <b>অর্জিত বোনাস:</b> <code>+৳{reward_amt} BDT</code>
+💳 <b>বর্তমান ব্যালেন্স:</b> <code>৳{new_bal} BDT</code>
+
+💡 <i>আপনার ব্যালেন্স দিয়ে বটের যেকোনো কোর্স সরাসরি কিনতে পারবেন।</i>""",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send referral bonus reward notice: {e}")
+
             await query.edit_message_text(
                 f"✅ **Order `{order_id}` approved successfully and access links delivered to user!**",
                 parse_mode="Markdown",
@@ -7081,19 +7456,29 @@ Choose how you want to broadcast:
         coupons = db.get_all_coupons()
         active_count = sum(1 for c in coupons.values() if c.get("status", "active") == "active")
         inactive_count = len(coupons) - active_count
+        r_stats = db.get_referral_global_stats()
+        ref_st_icon = "🟢 ON" if r_stats["is_enabled"] else "🔴 OFF"
 
-        msg = f"""🎟️ **Coupon & Referral Rewards Management**
-━━━━━━━━━━━━━━━━━━━━
+        msg = f"""<blockquote>🎟️ <b>[ Coupon & Referral Rewards Hub ]</b></blockquote>
 
-🏷️ **Totall Coupon:** `{len(coupons)}` 
-🟢 **Active Coupon:** `{active_count}` 
-🔴 **Inactive Coupon:** `{inactive_count}` 
+<blockquote>🏷️ <b>Coupons Overview:</b>
+• <b>Total Coupons:</b> <code>{len(coupons)}</code>
+• <b>Active:</b> <code>{active_count}</code> | <b>Inactive:</b> <code>{inactive_count}</code></blockquote>
 
-"""
+<blockquote>🎁 <b>Refer & Earn Program:</b>
+• <b>System Status:</b> <b>{ref_st_icon}</b>
+• <b>Bonus Per Referral:</b> <code>৳{r_stats['bonus_amount']} BDT</code>
+• <b>Total Referrers:</b> <code>{r_stats['total_referrers']}</code>
+• <b>Successful (Paid) Refs:</b> <code>{r_stats['total_converted']}</code>
+• <b>Total User Balance:</b> <code>৳{r_stats['total_balance']} BDT</code></blockquote>
+
+<blockquote>👇 <b>Select an option below:</b></blockquote>"""
 
         keyboard = [
+            [InlineKeyboardButton("👥 Refer & Earn Manager", callback_data="adm_referrals")],
             [InlineKeyboardButton("➕ Create New Coupon", callback_data="adm_add_coupon_start")],
             [InlineKeyboardButton("📋 All Coupons List", callback_data="adm_list_coupons")],
+            [InlineKeyboardButton(f"🔄 Refer System: {ref_st_icon}", callback_data="adm_tog_referral")],
             [InlineKeyboardButton("« Admin Menu", callback_data="adm_main")]
         ]
         if query.message.photo:
@@ -7101,9 +7486,55 @@ Choose how you want to broadcast:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "adm_referrals":
+        await render_admin_referrals_hub(query, context)
+
+    elif data == "adm_tog_referral":
+        new_st = db.toggle_referral_system()
+        st_word = "🟢 ON (Active)" if new_st else "🔴 OFF (Disabled)"
+        await query.answer(f"Referral system changed to {st_word}!", show_alert=True)
+        await render_admin_referrals_hub(query, context)
+
+    elif data.startswith("adm_reflist_"):
+        page_num = int(data.replace("adm_reflist_", ""))
+        await render_admin_referrers_list(query, context, page=page_num)
+
+    elif data.startswith("adm_refuview_"):
+        target_uid = int(data.replace("adm_refuview_", ""))
+        await render_admin_referral_user_view(query, context, target_uid)
+
+    elif data == "adm_ref_search":
+        context.user_data["admin_user_step"] = "search_referral_user"
+        await query.edit_message_text(
+            """<blockquote>🔍 <b>Search Referral User / রেফারেল ইউজার খুঁজুন</b></blockquote>
+
+<blockquote>📝 <b>নির্দেশনা:</b>
+ইউজারের <b>Telegram User ID</b>, <b>Name</b> অথবা <b>Username</b> লিখে পাঠান।
+(যেমন: <code>7610279126</code> বা <code>username</code>)</blockquote>
+
+<blockquote>❌ বাতিল করতে <code>/cancel</code> লিখুন।</blockquote>""",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data="adm_referrals")]])
+        )
+
+    elif data == "adm_ref_set_bonus":
+        context.user_data["admin_user_step"] = "set_referral_bonus"
+        cur_bonus = db.get_referral_reward_amount()
+        await query.edit_message_text(
+            f"""<blockquote>💵 <b>Set Referral Bonus Amount</b></blockquote>
+
+<blockquote>💰 <b>বর্তমান বোনাস:</b> <code>৳{cur_bonus} BDT</code> per paid referral</blockquote>
+
+<blockquote>👇 <b>প্রতি সফল পেইড রেফারের নতুন বোনাসের পরিমাণ লিখুন (যেমন: 50 বা 100):</b></blockquote>
+
+<blockquote>❌ বাতিল করতে <code>/cancel</code> লিখুন।</blockquote>""",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data="adm_referrals")]])
+        )
 
     elif data == "adm_add_coupon_start":
         context.user_data["admin_add_coupon_wizard"] = True
@@ -7476,6 +7907,55 @@ async def handle_admin_user_mgmt_input(update: Update, context: ContextTypes.DEF
             back_kb.append([InlineKeyboardButton("👤 View User Profile", callback_data=f"adm_uview_{uid}")])
         back_kb.append([InlineKeyboardButton("« User Management Menu", callback_data="adm_users")])
         await update.message.reply_text("✕ Aborted.", reply_markup=InlineKeyboardMarkup(back_kb))
+        return
+
+    if step == "set_referral_bonus":
+        context.user_data.pop("admin_user_step", None)
+        try:
+            val = int(text)
+            if val < 0:
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text("⚠️ অনুগ্রহ করে সঠিক ধনাত্মক পূর্ণসংখ্যা লিখুন (যেমন: 50 বা 100):")
+            return
+
+        db.set_referral_reward_amount(val)
+        keyboard = [
+            [InlineKeyboardButton("👥 Refer & Earn Hub", callback_data="adm_referrals")],
+            [InlineKeyboardButton("« Admin Menu", callback_data="adm_main")]
+        ]
+        await update.message.reply_text(
+            f"✅ **Success!**\n🎁 প্রতি সফল পেইড রেফারেলের বোনাস **৳{val} BDT** নির্ধারণ করা হয়েছে।",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    if step == "search_referral_user":
+        context.user_data.pop("admin_user_step", None)
+        results = db.search_referral_users(text)
+        if not results:
+            await update.message.reply_text(
+                f"❌ No student found matching '{text}'!",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Refer & Earn Hub", callback_data="adm_referrals")]])
+            )
+            return
+
+        keyboard = []
+        for u in results[:10]:
+            u_name = u.get("full_name") or u.get("username") or str(u.get("user_id"))
+            ref_c = u.get("referral_count", 0)
+            bal = u.get("balance", 0)
+            keyboard.append([
+                InlineKeyboardButton(f"👤 {u_name[:16]} — 👥 {ref_c} | 💰 ৳{bal}", callback_data=f"adm_refuview_{u['user_id']}")
+            ])
+        keyboard.append([InlineKeyboardButton("« Refer & Earn Hub", callback_data="adm_referrals")])
+
+        await update.message.reply_text(
+            f"🔍 <b>Referral Search Results for '{text}' ({len(results)} found):</b>\nClick to view referral details:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return
 
     if step and step.startswith("adjust_bal_"):
