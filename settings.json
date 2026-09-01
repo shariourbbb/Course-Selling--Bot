@@ -1,0 +1,48 @@
+{
+  "maintenance_mode": false,
+  "maintenance_message": "bot off monday",
+  "welcome_message": "🎓 StudyMart-এ আপনাকে স্বাগতম।\n\n📚 শুরু করতে নিচের কিবোর্ড থেকে আপনার Batch নির্বাচন করুন।\n/start",
+  "delivery_message": "🎉 **আলহামদুলিল্লাহ! আপনার পেমেন্ট অনুমোদিত হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **অর্ডার আইডি:** `{order_id}`\n📖 **কোর্স:** {course_name}\n💰 **টাকা:** {amount} ৳\n\n🎁 **আপনার কোর্সের লিংক ও অ্যাক্সেস:**\n{access_text}\n\n✨ যেকোনো সময় এই লিংক দেখতে বটে '✦ আমার কোর্সসমূহ' বাটনে ক্লিক করুন। শুভকামনা!",
+  "fallback_message": "🔍 **'{query}' সম্পর্কিত কোনো কোর্স বা ই-বুক খুঁজে পাওয়া যায়নি।**\n\n💡 আপনি চাইলে সরাসরি নিচের বাটন থেকে সকল ক্যাটাগরি ও ক্লাস ব্রাউজ করতে পারেন:",
+  "info_message": "about",
+  "bot_description": "🎓 StudyMart-এ আপনাকে স্বাগতম!\n\nআপনার বিশ্বস্ত অটোমেটেড কোর্স প্ল্যাটফর্ম।\n\n📖 SSC • 📚 HSC • 🎯 Admission • 💼 Skills\n\n💳 নিরাপদ পেমেন্ট\n⚡ তাত্ক্ষণিক কোর্স অ্যাক্সেস\n🤖 সম্পূর্ণ অটোমেটেড",
+  "support_message": "➥ **Contact Support / হেল্পলাইন**\n━━━━━━━━━━━━━━━━━━━━\n\nযেকোনো কোর্স সংক্রান্ত তথ্য, পেমেন্ট হেল্প বা সমস্যার জন্য আমাদের সাপোর্ট টিমের সাথে যোগাযোগ করুন:\n\n👨‍💻 **Admin Support:** @StudyMartAdmin\n📢 **Official Channel:** @studymart0_bot\n⏰ **সাপোর্ট সময়:** সকাল ৯:০০ টা - রাত ১২:০০ টা\n\n💡 আপনার কোনো সমস্যা থাকলে এডমিনের ইনবক্সে সরাসরি মেসেজ দিন。",
+  "home_keyboard_grid": [
+    [
+      {
+        "text": "📚 Browse Courses",
+        "action": "browse_categories",
+        "enabled": false
+      }
+    ],
+    [
+      {
+        "text": "📖 Browse E-Book",
+        "action": "browse_ebooks",
+        "enabled": false
+      }
+    ],
+    [
+      {
+        "text": "🎓 My Courses",
+        "action": "my_courses_nav",
+        "enabled": false
+      },
+      {
+        "text": "📃 My E-Books",
+        "action": "my_ebooks_nav",
+        "enabled": false
+      }
+    ],
+    [
+      {
+        "text": "💬 Support",
+        "action": "https://t.me/StudyMartAdmin",
+        "enabled": false
+      }
+    ]
+  ],
+  "delivery_free_with_link": "Broadcast message Test",
+  "delivery_paid_with_link": "🎉 আপনার Course Purchase সফল হয়েছে!\n\n📘 ${courseName}\n\n✅ Payment সফলভাবে সম্পন্ন হয়েছে।\n\nনিচের বাটনে ক্লিক করে Course-এ যুক্ত হয়ে যান।",
+  "delivery_paid_no_link": "🎉 আপনার Course Purchase সফল হয়েছে!\n\n📘 ${courseName}\n\n✅ Payment সফলভাবে সম্পন্ন হয়েছে।\n\n⚠️ এই Course-এর Join Link বর্তমানে যুক্ত করা হয়নি।\n\n📩 অনুগ্রহ করে @helpline3012_bot-এ যোগাযোগ করুন।"
+}

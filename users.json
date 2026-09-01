@@ -1,0 +1,89 @@
+{
+  "8319458917": {
+    "user_id": 8319458917,
+    "username": "",
+    "full_name": "Infinity",
+    "purchased_courses": [],
+    "purchased_ebooks": [],
+    "balance": 118,
+    "earnings_enabled": true,
+    "earnings_history": [
+      {
+        "amount": 68,
+        "coupon_code": "RB15",
+        "order_id": "ORD-1005",
+        "date": "2026-08-31 23:43:48.126415"
+      }
+    ],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "joined_date": "2026-08-31 01:27:09.151189",
+    "access_links": {
+      "COURSE-1788158992": "https://t.me/+p8KOw5ezWIQyZDE1"
+    }
+  },
+  "8167080297": {
+    "user_id": 8167080297,
+    "username": "fjgjhijhb",
+    "full_name": "Up 1",
+    "purchased_courses": [],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "joined_date": "2026-08-31 01:54:40.628272"
+  },
+  "6353597308": {
+    "user_id": 6353597308,
+    "username": "Paulpiy",
+    "full_name": "Paul",
+    "purchased_courses": [
+      "COURSE-1788192212"
+    ],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "joined_date": "2026-08-31 01:57:21.850835"
+  },
+  "7610279126": {
+    "user_id": 7610279126,
+    "username": "StalkXd",
+    "full_name": "Errrrrrrrorrrrrr 404 ╰‿╯",
+    "purchased_courses": [],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "joined_date": "2026-08-31 08:25:26.791812"
+  },
+  "8332445923": {
+    "user_id": 8332445923,
+    "username": "FSo0X",
+    "full_name": "꧁༒☬M̷O̷N̷S̷T̷E̷R̷☬༒꧂",
+    "purchased_courses": [
+      "COURSE-1788158992"
+    ],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "joined_date": "2026-08-31 12:42:55.668310",
+    "access_links": {
+      "COURSE-1788158992": "https://t.me/+p8KOw5ezWIQyZDE1"
+    }
+  }
+}

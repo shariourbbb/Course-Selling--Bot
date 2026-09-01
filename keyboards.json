@@ -1,0 +1,39 @@
+{
+  "buttons": [
+    [
+      {
+        "text": "HSC 26",
+        "action": "cat_HSC 26"
+      },
+      {
+        "text": "HSC 27",
+        "action": "cat_HSC 27"
+      },
+      {
+        "text": "HSC 28",
+        "action": "cat_HSC 28"
+      }
+    ],
+    [
+      {
+        "text": "🛒 My Cart",
+        "action": "cart"
+      },
+      {
+        "text": "👤 Profile",
+        "action": "profile"
+      },
+      {
+        "text": "ℹ Info",
+        "action": "info"
+      }
+    ],
+    [
+      {
+        "text": "⚙ Admin Panel",
+        "action": "admin",
+        "admin_only": true
+      }
+    ]
+  ]
+}

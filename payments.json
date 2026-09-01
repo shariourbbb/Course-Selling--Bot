@@ -1,0 +1,23 @@
+{
+  "methods": {
+    "bkash": {
+      "name": "bKash",
+      "number": "01780000000000",
+      "instruction": "1️⃣ bKash App অথবা *247# ডায়াল করে Send Money বা Cash In করুন।\n\n2️⃣ উপরের নম্বরে নির্ধারিত পরিমাণ টাকা পাঠান।",
+      "status": "active"
+    },
+    "nagad": {
+      "name": "Nagad",
+      "number": "01221014521",
+      "instruction": "Personal (Send Money)",
+      "status": "active"
+    },
+    "rocket": {
+      "name": "Rocket",
+      "number": "01XXXXXXXXX",
+      "instruction": "Personal (Send Money)",
+      "status": "inactive"
+    }
+  },
+  "note": "copy trx"
+}
