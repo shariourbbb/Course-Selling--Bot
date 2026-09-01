@@ -3,7 +3,9 @@
     "user_id": 8319458917,
     "username": "",
     "full_name": "Infinity",
-    "purchased_courses": [],
+    "purchased_courses": [
+      "COURSE-1788262366"
+    ],
     "purchased_ebooks": [],
     "balance": 118,
     "earnings_enabled": true,
@@ -59,9 +61,16 @@
     "full_name": "Errrrrrrrorrrrrr 404 ╰‿╯",
     "purchased_courses": [],
     "purchased_ebooks": [],
-    "balance": 0,
-    "earnings_enabled": false,
-    "earnings_history": [],
+    "balance": 50,
+    "earnings_enabled": true,
+    "earnings_history": [
+      {
+        "amount": 50,
+        "coupon_code": "BIOTEST50",
+        "order_id": "ORD-123",
+        "date": "2026-09-01 10:52:25.463144"
+      }
+    ],
     "referral_count": 0,
     "referred_users": [],
     "referred_by": null,
@@ -76,7 +85,7 @@
     ],
     "purchased_ebooks": [],
     "balance": 0,
-    "earnings_enabled": false,
+    "earnings_enabled": true,
     "earnings_history": [],
     "referral_count": 0,
     "referred_users": [],
@@ -85,5 +94,19 @@
     "access_links": {
       "COURSE-1788158992": "https://t.me/+p8KOw5ezWIQyZDE1"
     }
+  },
+  "7439866781": {
+    "user_id": 7439866781,
+    "username": "Richemanak",
+    "full_name": ")D Ri",
+    "purchased_courses": [],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": null,
+    "joined_date": "2026-09-01 12:57:48.609888"
   }
 }

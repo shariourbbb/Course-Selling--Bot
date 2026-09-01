@@ -5,9 +5,25 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from config import (
     COURSES_DB, USERS_DB, ORDERS_DB, COUPONS_DB, CART_DB,
-    CATEGORIES_DB, EBOOKS_DB, WITHDRAWALS_DB, PAYMENTS_DB,
-    ADMINS_DB, ADMIN_IDS, PAYMENT_METHODS, KEYBOARDS_DB, SETTINGS_DB
+    CATEGORIES_DB, EBOOK_CATEGORIES_DB, EBOOKS_DB, WITHDRAWALS_DB, PAYMENTS_DB,
+    ADMINS_DB, ADMIN_PERMISSIONS_DB, ADMIN_IDS, PAYMENT_METHODS, KEYBOARDS_DB, SETTINGS_DB
 )
+
+ADMIN_PERMISSION_DEFINITIONS = {
+    "course_manage": {"name": "Course Manage", "emoji": "📘"},
+    "category_manage": {"name": "Category Manage", "emoji": "📁"},
+    "orders": {"name": "Orders", "emoji": "📋"},
+    "coupon": {"name": "Coupon", "emoji": "🎟"},
+    "payment_settings": {"name": "Payment Settings", "emoji": "💳"},
+    "user_manage": {"name": "User", "emoji": "👤"},
+    "broadcast": {"name": "Broadcast", "emoji": "📢"},
+    "admin_manage": {"name": "Admin Manage", "emoji": "👑"},
+    "statistics": {"name": "Statistics", "emoji": "📊"},
+    "bot_settings": {"name": "Bot Settings", "emoji": "⚙️"},
+    "admin_permission": {"name": "Admin Permission", "emoji": "🔐"},
+    "info_manage": {"name": "Info Manage", "emoji": "ℹ️"},
+    "ebook_manage": {"name": "E-Book Manage", "emoji": "📖"}
+}
 
 
 class Database:
@@ -18,12 +34,21 @@ class Database:
         self.coupons = self._load(COUPONS_DB)
         self.cart = self._load(CART_DB)
         self.categories = self._load_categories(CATEGORIES_DB)
+        self.ebook_categories = self._load_categories(EBOOK_CATEGORIES_DB)
         self.ebooks = self._load(EBOOKS_DB)
         self.withdrawals = self._load(WITHDRAWALS_DB)
         self.payments = self._load_payments(PAYMENTS_DB)
         self.admins = self._load_admins(ADMINS_DB)
+        self.admin_permissions = self._load(ADMIN_PERMISSIONS_DB)
         self.keyboards = self._load_keyboards(KEYBOARDS_DB)
         self.settings = self._load_settings(SETTINGS_DB)
+
+        # Ensure default ebook categories exist if empty
+        if not self.ebook_categories:
+            default_eb_cats = ["HSC 26", "HSC 27", "HSC 28", "SSC", "Medical", "Varsity", "General"]
+            for c in default_eb_cats:
+                self.ebook_categories[c] = []
+            self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
 
     def _load(self, filename: str) -> dict:
         if os.path.exists(filename):
@@ -431,6 +456,424 @@ class Database:
             return ebook_id in user.get("purchased_ebooks", [])
         return False
 
+    def has_user_ebook_access(self, user_id: int, ebook_id: str) -> bool:
+        eb = self.get_ebook(ebook_id)
+        if not eb:
+            return False
+        if eb.get("price", 0) == 0:
+            return True
+        return self.is_ebook_purchased(user_id, ebook_id)
+
+    def get_ebooks_by_category(self, category: str = None) -> List[dict]:
+        result = []
+        for eid, eb in self.ebooks.items():
+            if eb.get("status") == "inactive":
+                continue
+            eb_cat = str(eb.get("category", "General")).strip().lower()
+            if category and str(category).strip().upper() != "ALL":
+                target = str(category).strip().lower()
+                if eb_cat != target and target not in eb_cat and eb_cat not in target:
+                    continue
+            e = dict(eb)
+            e["id"] = eid
+            result.append(e)
+        return result
+
+    # ==================== EBOOK CATEGORY & DIRECTORY OPERATIONS ====================
+    def is_ebook_category_active(self, folder_path: str) -> bool:
+        clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ").lower()
+        if not clean_path:
+            return True
+        inactive_list = [str(x).strip().replace(" / ", " > ").replace("/", " > ").lower() for x in self.get_setting("inactive_ebook_categories", [])]
+        if clean_path in inactive_list:
+            return False
+        segments = clean_path.split(" > ")
+        for i in range(1, len(segments) + 1):
+            parent_sub = " > ".join(segments[:i])
+            if parent_sub in inactive_list:
+                return False
+        return True
+
+    def toggle_ebook_category_status(self, folder_path: str) -> bool:
+        clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ")
+        if not clean_path:
+            return True
+        clean_lower = clean_path.lower()
+        raw_list = list(self.get_setting("inactive_ebook_categories", []))
+        inactive_map = {str(x).strip().replace(" / ", " > ").replace("/", " > ").lower(): str(x) for x in raw_list}
+        if clean_lower in inactive_map:
+            raw_list = [x for x in raw_list if str(x).strip().replace(" / ", " > ").replace("/", " > ").lower() != clean_lower]
+            self.set_setting("inactive_ebook_categories", raw_list)
+            return True
+        else:
+            raw_list.append(clean_path)
+            self.set_setting("inactive_ebook_categories", raw_list)
+            return False
+
+    def get_ebook_sub_folders(self, parent_path: str = "", include_inactive: bool = True) -> List[str]:
+        clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+        if not isinstance(self.ebook_categories, dict):
+            return []
+
+        if not clean_parent:
+            top_level = []
+            for k in self.ebook_categories.keys():
+                if " > " not in k:
+                    if include_inactive or self.is_ebook_category_active(k):
+                        top_level.append(k)
+            return top_level
+
+        for k, sub_list in self.ebook_categories.items():
+            if k.strip().lower() == clean_parent.lower():
+                if isinstance(sub_list, list):
+                    items = [str(s).strip() for s in sub_list if str(s).strip()]
+                    if include_inactive:
+                        return items
+                    return [s for s in items if self.is_ebook_category_active(f"{clean_parent} > {s}")]
+                return []
+
+        return []
+
+    def add_ebook_sub_folder(self, parent_path: str, folder_name: str) -> bool:
+        clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+        clean_name = str(folder_name).strip()
+        if not clean_name:
+            return False
+
+        if not isinstance(self.ebook_categories, dict):
+            self.ebook_categories = {}
+
+        if not clean_parent:
+            if clean_name not in self.ebook_categories:
+                self.ebook_categories[clean_name] = []
+                self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+                return True
+            return False
+
+        found_key = None
+        for k in self.ebook_categories.keys():
+            if k.strip().lower() == clean_parent.lower():
+                found_key = k
+                break
+
+        if not found_key:
+            found_key = clean_parent
+            self.ebook_categories[found_key] = []
+
+        if not isinstance(self.ebook_categories[found_key], list):
+            self.ebook_categories[found_key] = []
+
+        existing_lower = [s.strip().lower() for s in self.ebook_categories[found_key]]
+        if clean_name.lower() in existing_lower:
+            return False
+
+        self.ebook_categories[found_key].append(clean_name)
+        new_full_path = f"{found_key} > {clean_name}"
+        if new_full_path not in self.ebook_categories:
+            self.ebook_categories[new_full_path] = []
+
+        self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+        return True
+
+    def delete_ebook_sub_folder(self, parent_path: str, folder_name: str) -> bool:
+        clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+        clean_name = str(folder_name).strip()
+        if not isinstance(self.ebook_categories, dict):
+            return False
+
+        if not clean_parent:
+            deleted = False
+            for k in list(self.ebook_categories.keys()):
+                if k.strip().lower() == clean_name.lower() or k.strip().lower().startswith(clean_name.lower() + " > "):
+                    del self.ebook_categories[k]
+                    deleted = True
+            if deleted:
+                self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+            return deleted
+
+        deleted = False
+        target_parent_key = None
+        for k, sub_list in self.ebook_categories.items():
+            if k.strip().lower() == clean_parent.lower() and isinstance(sub_list, list):
+                target_parent_key = k
+                for s in list(sub_list):
+                    if s.strip().lower() == clean_name.lower():
+                        sub_list.remove(s)
+                        deleted = True
+
+        full_child_path = f"{clean_parent} > {clean_name}".lower()
+        for k in list(self.ebook_categories.keys()):
+            if k.strip().lower() == full_child_path or k.strip().lower().startswith(full_child_path + " > "):
+                del self.ebook_categories[k]
+                deleted = True
+
+        if deleted:
+            self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+        return deleted
+
+    def move_ebook_folder_order(self, parent_path: str, folder_name: str, direction: str) -> bool:
+        clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+        clean_name = str(folder_name).strip()
+        if not isinstance(self.ebook_categories, dict):
+            return False
+
+        if not clean_parent:
+            keys = list(self.ebook_categories.keys())
+            if clean_name not in keys:
+                return False
+            idx = keys.index(clean_name)
+            if direction == "up" and idx > 0:
+                keys[idx], keys[idx-1] = keys[idx-1], keys[idx]
+            elif direction == "down" and idx < len(keys) - 1:
+                keys[idx], keys[idx+1] = keys[idx+1], keys[idx]
+            else:
+                return False
+            new_cats = {}
+            for k in keys:
+                new_cats[k] = self.ebook_categories[k]
+            self.ebook_categories = new_cats
+            self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+            return True
+
+        for k, sub_list in self.ebook_categories.items():
+            if k.strip().lower() == clean_parent.lower() and isinstance(sub_list, list):
+                if clean_name not in sub_list:
+                    return False
+                idx = sub_list.index(clean_name)
+                if direction == "up" and idx > 0:
+                    sub_list[idx], sub_list[idx-1] = sub_list[idx-1], sub_list[idx]
+                elif direction == "down" and idx < len(sub_list) - 1:
+                    sub_list[idx], sub_list[idx+1] = sub_list[idx+1], sub_list[idx]
+                else:
+                    return False
+                self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+                return True
+        return False
+
+    def move_ebook_folder_path(self, old_path: str, new_path: str) -> bool:
+        old_path = old_path.strip().replace(" / ", " > ").replace("/", " > ")
+        new_path = new_path.strip().replace(" / ", " > ").replace("/", " > ")
+        if not old_path or not new_path or old_path == new_path:
+            return False
+
+        old_segments = old_path.split(" > ")
+        old_parent_path = " > ".join(old_segments[:-1])
+        old_base = old_segments[-1]
+
+        new_segments = new_path.split(" > ")
+        new_parent_path = " > ".join(new_segments[:-1])
+        new_base = new_segments[-1]
+
+        if not old_parent_path:
+            pass
+        else:
+            for k, sub_list in list(self.ebook_categories.items()):
+                if k.strip().lower() == old_parent_path.lower() and isinstance(sub_list, list):
+                    if old_base in sub_list:
+                        sub_list.remove(old_base)
+
+        if not new_parent_path:
+            if new_base not in self.ebook_categories:
+                self.ebook_categories[new_base] = []
+        else:
+            target_key = None
+            for k in self.ebook_categories.keys():
+                if k.strip().lower() == new_parent_path.lower():
+                    target_key = k
+                    break
+            if not target_key:
+                target_key = new_parent_path
+                self.ebook_categories[target_key] = []
+            if not isinstance(self.ebook_categories[target_key], list):
+                self.ebook_categories[target_key] = []
+            if new_base not in self.ebook_categories[target_key]:
+                self.ebook_categories[target_key].append(new_base)
+
+        new_categories = {}
+        for k, v in self.ebook_categories.items():
+            if k == old_path:
+                new_categories[new_path] = v
+            elif k.startswith(old_path + " > "):
+                suffix = k[len(old_path):]
+                new_categories[new_path + suffix] = v
+            else:
+                new_categories[k] = v
+        self.ebook_categories = new_categories
+
+        # Update all ebooks whose folder_path is under old_path
+        for eid, eb in self.ebooks.items():
+            eb_fld = str(eb.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ")
+            if eb_fld == old_path:
+                eb["folder_path"] = new_path
+                segs = new_path.split(" > ")
+                eb["category"] = segs[0] if len(segs) > 0 else ""
+                eb["subcategory"] = segs[1] if len(segs) > 1 else ""
+            elif eb_fld.startswith(old_path + " > "):
+                suffix = eb_fld[len(old_path):]
+                updated_fld = new_path + suffix
+                eb["folder_path"] = updated_fld
+                segs = updated_fld.split(" > ")
+                eb["category"] = segs[0] if len(segs) > 0 else ""
+                eb["subcategory"] = segs[1] if len(segs) > 1 else ""
+
+        self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+        self._save(self.ebooks, EBOOKS_DB)
+        return True
+
+    def move_ebook_folder_left(self, parent_path: str, folder_name: str) -> bool:
+        clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+        clean_name = str(folder_name).strip()
+        if not clean_parent:
+            return False
+        segments = [s.strip() for s in clean_parent.split(" > ") if s.strip()]
+        new_parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
+        old_full_path = f"{clean_parent} > {clean_name}"
+        new_full_path = f"{new_parent_path} > {clean_name}" if new_parent_path else clean_name
+        return self.move_ebook_folder_path(old_full_path, new_full_path)
+
+    def move_ebook_folder_right(self, parent_path: str, folder_name: str, target_sibling: str) -> bool:
+        clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+        clean_name = str(folder_name).strip()
+        clean_sibling = str(target_sibling).strip()
+        if clean_name == clean_sibling:
+            return False
+        old_full_path = f"{clean_parent} > {clean_name}" if clean_parent else clean_name
+        new_full_path = f"{clean_parent} > {clean_sibling} > {clean_name}" if clean_parent else f"{clean_sibling} > {clean_name}"
+        return self.move_ebook_folder_path(old_full_path, new_full_path)
+
+    def rename_ebook_folder(self, parent_path: str, old_name: str, new_name: str) -> bool:
+        clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+        clean_old = str(old_name).strip()
+        clean_new = str(new_name).strip()
+        if not clean_new or not clean_old:
+            return False
+        if not isinstance(self.ebook_categories, dict):
+            return False
+
+        if not clean_parent:
+            if clean_old not in self.ebook_categories:
+                return False
+            if clean_new in self.ebook_categories:
+                return False
+            new_cats = {}
+            for k, v in self.ebook_categories.items():
+                if k == clean_old:
+                    new_cats[clean_new] = v
+                else:
+                    new_cats[k] = v
+            old_child_prefix = f"{clean_old} > "
+            for k, v in list(new_cats.items()):
+                if k.startswith(old_child_prefix):
+                    new_key = clean_new + k[len(old_child_prefix):]
+                    new_cats[new_key] = v
+                    del new_cats[k]
+            self.ebook_categories = new_cats
+            self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+            return True
+
+        for k, sub_list in self.ebook_categories.items():
+            if k.strip().lower() == clean_parent.lower() and isinstance(sub_list, list):
+                if clean_old not in sub_list:
+                    return False
+                if clean_new in sub_list:
+                    return False
+                idx = sub_list.index(clean_old)
+                sub_list[idx] = clean_new
+                old_child_path = f"{clean_parent} > {clean_old}"
+                new_child_path = f"{clean_parent} > {clean_new}"
+                for ck in list(self.ebook_categories.keys()):
+                    if ck == old_child_path:
+                        self.ebook_categories[new_child_path] = self.ebook_categories.pop(ck)
+                    elif ck.startswith(old_child_path + " > "):
+                        new_ck = new_child_path + ck[len(old_child_path):]
+                        self.ebook_categories[new_ck] = self.ebook_categories.pop(ck)
+                self._save_raw(self.ebook_categories, EBOOK_CATEGORIES_DB)
+                return True
+        return False
+
+    def get_ebooks_by_folder(self, folder_path: str, include_inactive: bool = False) -> List[dict]:
+        clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ")
+        if not clean_path:
+            return [dict(eb, id=eid) for eid, eb in self.ebooks.items() if include_inactive or eb.get("status") != "inactive"]
+
+        segments = [s.strip().lower() for s in clean_path.split(" > ") if s.strip()]
+        result = []
+        for eid, eb in self.ebooks.items():
+            if not include_inactive and eb.get("status") == "inactive":
+                continue
+            eb_fld = str(eb.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ").lower()
+            eb_cat = str(eb.get("category", "")).strip().lower()
+            eb_sub = str(eb.get("subcategory", "")).strip().lower()
+
+            if eb_fld:
+                if eb_fld == clean_path.lower():
+                    e = dict(eb)
+                    e["id"] = eid
+                    result.append(e)
+                continue
+
+            if len(segments) == 1:
+                if eb_cat == segments[0] or segments[0] in eb_cat:
+                    e = dict(eb)
+                    e["id"] = eid
+                    result.append(e)
+            elif len(segments) == 2:
+                if (eb_cat == segments[0] or segments[0] in eb_cat) and (eb_sub == segments[1] or segments[1] in eb_sub):
+                    e = dict(eb)
+                    e["id"] = eid
+                    result.append(e)
+            elif len(segments) >= 3:
+                if (eb_cat == segments[0] or segments[0] in eb_cat) and any(seg in f"{eb_sub} {eb_fld}" for seg in segments[1:]):
+                    e = dict(eb)
+                    e["id"] = eid
+                    result.append(e)
+        return result
+
+    def get_ebook_categories(self, include_inactive: bool = True) -> List[str]:
+        return self.get_ebook_sub_folders("", include_inactive=include_inactive)
+
+    def get_ebook_subcategories(self, category: str, include_inactive: bool = True) -> List[str]:
+        return self.get_ebook_sub_folders(category, include_inactive=include_inactive)
+
+    def add_ebook_category(self, name: str) -> bool:
+        return self.add_ebook_sub_folder("", name)
+
+    def delete_ebook_category(self, name: str) -> bool:
+        return self.delete_ebook_sub_folder("", name)
+
+    def move_ebook_to_folder(self, ebook_id: str, new_folder_path: str) -> bool:
+        eb = self.get_ebook(ebook_id)
+        if not eb:
+            return False
+        new_folder = new_folder_path.strip().replace(" / ", " > ").replace("/", " > ")
+        eb["folder_path"] = new_folder
+        segs = new_folder.split(" > ")
+        eb["category"] = segs[0] if len(segs) > 0 else ""
+        eb["subcategory"] = segs[1] if len(segs) > 1 else ""
+        self._save(self.ebooks, EBOOKS_DB)
+        return True
+
+    def move_ebook_left(self, ebook_id: str) -> bool:
+        eb = self.get_ebook(ebook_id)
+        if not eb:
+            return False
+        eb_fld = str(eb.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ")
+        if not eb_fld:
+            return False
+        segments = [s.strip() for s in eb_fld.split(" > ") if s.strip()]
+        if len(segments) <= 1:
+            return False
+        new_fld = " > ".join(segments[:-1])
+        return self.move_ebook_to_folder(ebook_id, new_fld)
+
+    def move_ebook_right(self, ebook_id: str, target_folder: str) -> bool:
+        eb = self.get_ebook(ebook_id)
+        if not eb:
+            return False
+        eb_fld = str(eb.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ")
+        new_fld = f"{eb_fld} > {target_folder}" if eb_fld else target_folder
+        return self.move_ebook_to_folder(ebook_id, new_fld)
+
     def add_ebook_purchase(self, user_id: int, ebook_id: str):
         user = self.get_user(user_id)
         if user:
@@ -527,7 +970,37 @@ class Database:
         return results
 
     # ==================== HIERARCHICAL FOLDER & CATEGORY OPERATIONS ====================
-    def get_sub_folders(self, parent_path: str = "") -> List[str]:
+    def is_category_active(self, folder_path: str) -> bool:
+        clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ").lower()
+        if not clean_path:
+            return True
+        inactive_list = [str(x).strip().replace(" / ", " > ").replace("/", " > ").lower() for x in self.get_setting("inactive_categories", [])]
+        if clean_path in inactive_list:
+            return False
+        segments = clean_path.split(" > ")
+        for i in range(1, len(segments) + 1):
+            parent_sub = " > ".join(segments[:i])
+            if parent_sub in inactive_list:
+                return False
+        return True
+
+    def toggle_category_status(self, folder_path: str) -> bool:
+        clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ")
+        if not clean_path:
+            return True
+        clean_lower = clean_path.lower()
+        raw_list = list(self.get_setting("inactive_categories", []))
+        inactive_map = {str(x).strip().replace(" / ", " > ").replace("/", " > ").lower(): str(x) for x in raw_list}
+        if clean_lower in inactive_map:
+            raw_list = [x for x in raw_list if str(x).strip().replace(" / ", " > ").replace("/", " > ").lower() != clean_lower]
+            self.set_setting("inactive_categories", raw_list)
+            return True
+        else:
+            raw_list.append(clean_path)
+            self.set_setting("inactive_categories", raw_list)
+            return False
+
+    def get_sub_folders(self, parent_path: str = "", include_inactive: bool = True) -> List[str]:
         clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
         if not isinstance(self.categories, dict):
             self.categories = {}
@@ -538,20 +1011,27 @@ class Database:
             roots = []
             for k in self.categories.keys():
                 if " > " not in k:
-                    roots.append(k)
+                    if include_inactive or self.is_category_active(k):
+                        roots.append(k)
             return roots
 
         # Look for exact path key in self.categories
         for k, sub_list in self.categories.items():
             if k.strip().lower() == clean_parent.lower():
-                return list(sub_list) if isinstance(sub_list, list) else []
+                items = list(sub_list) if isinstance(sub_list, list) else []
+                if include_inactive:
+                    return items
+                return [s for s in items if self.is_category_active(f"{clean_parent} > {s}")]
 
         # If it's a top-level category (1 segment)
         segments = [s.strip() for s in clean_parent.split(" > ") if s.strip()]
         if len(segments) == 1:
             for k, sub_list in self.categories.items():
                 if k.strip().lower() == segments[0].lower():
-                    return list(sub_list) if isinstance(sub_list, list) else []
+                    items = list(sub_list) if isinstance(sub_list, list) else []
+                    if include_inactive:
+                        return items
+                    return [s for s in items if self.is_category_active(f"{clean_parent} > {s}")]
 
         return []
 
@@ -859,11 +1339,11 @@ class Database:
                 return True
         return False
 
-    def get_categories(self) -> List[str]:
-        return self.get_sub_folders("")
+    def get_categories(self, include_inactive: bool = True) -> List[str]:
+        return self.get_sub_folders("", include_inactive=include_inactive)
 
-    def get_subcategories(self, category: str) -> List[str]:
-        return self.get_sub_folders(category)
+    def get_subcategories(self, category: str, include_inactive: bool = True) -> List[str]:
+        return self.get_sub_folders(category, include_inactive=include_inactive)
 
     def add_category(self, name: str) -> bool:
         return self.add_sub_folder("", name)
@@ -1100,12 +1580,15 @@ class Database:
         min_purchase: int = 0,
         max_discount: int = 0,
         applicable_category: str = "All",
+        applicable_course_id: Optional[str] = None,
+        applicable_course_name: Optional[str] = None,
         usage_limit: int = 100,
         per_user_limit: int = 1,
         first_order_only: bool = False,
         status: str = "active",
         enable_referral_reward: bool = False,
         reward_user_id: Optional[int] = None,
+        reward_type: str = "fixed",
         reward_amount: int = 0,
         start_date: str = "",
         expiry_date: str = ""
@@ -1119,6 +1602,8 @@ class Database:
             "min_purchase": int(min_purchase),
             "max_discount": int(max_discount),
             "applicable_category": applicable_category or "All",
+            "applicable_course_id": applicable_course_id,
+            "applicable_course_name": applicable_course_name,
             "usage_limit": int(usage_limit),
             "uses": int(usage_limit),
             "per_user_limit": int(per_user_limit),
@@ -1126,11 +1611,12 @@ class Database:
             "status": status or "active",
             "enable_referral_reward": bool(enable_referral_reward),
             "reward_user_id": int(reward_user_id) if reward_user_id else None,
+            "reward_type": reward_type or "fixed",
             "reward_amount": int(reward_amount),
             "start_date": start_date or str(datetime.now())[:10],
             "expiry_date": expiry_date or "None",
-            "used_count": 0,
-            "used_by": {}
+            "used_count": self.coupons.get(clean_code, {}).get("used_count", 0),
+            "used_by": self.coupons.get(clean_code, {}).get("used_by", {})
         }
         if enable_referral_reward and reward_user_id:
             self.enable_user_earnings(int(reward_user_id), True)
@@ -1142,20 +1628,22 @@ class Database:
         code: str,
         user_id: int,
         purchase_amount: int,
-        category: str = ""
+        category: str = "",
+        course_id: str = "",
+        course_ids: List[str] = None
     ) -> Tuple[bool, int, str, Optional[dict]]:
         clean_code = code.upper().strip()
         coupon = self.coupons.get(clean_code)
         if not coupon:
-            return False, 0, "❌ কুপন কোডটি খুঁজে পাওয়া যায়নি!", None
+            return False, 0, "Coupon not found.", None
 
         if coupon.get("status", "active") != "active":
-            return False, 0, "❌ এই কুপনটি বর্তমানে নিষ্ক্রিয় (Inactive) রয়েছে!", None
+            return False, 0, "This coupon is currently inactive.", None
 
         used_count = coupon.get("used_count", 0)
         usage_limit = coupon.get("usage_limit", coupon.get("uses", 100))
         if used_count >= usage_limit:
-            return False, 0, "❌ এই কুপনের ব্যবহারের সর্বোচ্চ সীমা শেষ হয়েছে!", None
+            return False, 0, "Coupon usage limit reached.", None
 
         uid_str = str(user_id)
         used_by = coupon.get("used_by", {})
@@ -1165,27 +1653,42 @@ class Database:
         user_uses = used_by.get(uid_str, 0)
         per_user_limit = coupon.get("per_user_limit", 1)
         if user_uses >= per_user_limit:
-            return False, 0, f"❌ আপনি ইতিমধ্যে সর্বোচ্চ ({per_user_limit} বার) এই কুপন ব্যবহার করেছেন!", None
+            if per_user_limit > 1:
+                return False, 0, f"Coupon already used (Max {per_user_limit} times).", None
+            return False, 0, "You have already used this coupon.", None
 
         min_p = coupon.get("min_purchase", 0)
         if min_p > 0 and purchase_amount < min_p:
-            return False, 0, f"❌ এই কুপন ব্যবহারের জন্য সর্বনিম্ন {min_p} ৳ এর কোর্স অর্ডার করতে হবে!", None
+            return False, 0, f"Minimum order of ৳{min_p} required.", None
 
+        # Check Specific Course Scope
+        app_cid = coupon.get("applicable_course_id")
+        if app_cid:
+            c_name = coupon.get("applicable_course_name") or "selected course"
+            if course_ids:
+                if app_cid not in course_ids:
+                    return False, 0, f"Valid only for '{c_name}'.", None
+            elif course_id:
+                if app_cid != course_id:
+                    return False, 0, f"Valid only for '{c_name}'.", None
+
+        # Check Category Scope
         app_cat = coupon.get("applicable_category", "All")
-        if app_cat != "All" and category and app_cat.strip().lower() != category.strip().lower():
-            return False, 0, f"❌ এই কুপনটি শুধুমাত্র '{app_cat}' ক্যাটাগরির কোর্সের জন্য প্রযোজ্য!", None
+        if app_cat and app_cat not in ["All", "Specific"] and category:
+            if app_cat.strip().lower() != category.strip().lower():
+                return False, 0, f"Valid only for '{app_cat}' category.", None
 
         if coupon.get("first_order_only", False):
             user_orders = self.get_user_orders(user_id)
             approved_orders = [o for o in user_orders if o.get("status") == "approved"]
             if approved_orders:
-                return False, 0, "❌ এই কুপনটি শুধুমাত্র আপনার প্রথম অর্ডারের জন্য প্রযোজ্য!", None
+                return False, 0, "Valid only for first order.", None
 
         dtype = coupon.get("discount_type", "fixed")
         dval = coupon.get("discount_value", coupon.get("discount", 0))
 
         if dtype == "percentage":
-            calc_disc = int(purchase_amount * (dval / 100.0))
+            calc_disc = int(round(purchase_amount * (dval / 100.0)))
             max_d = coupon.get("max_discount", 0)
             if max_d > 0 and calc_disc > max_d:
                 calc_disc = max_d
@@ -1193,7 +1696,7 @@ class Database:
         else:
             final_discount = min(dval, purchase_amount)
 
-        return True, final_discount, "✅ কুপন সফলভাবে প্রয়োগ করা হয়েছে!", coupon
+        return True, final_discount, "Coupon applied successfully!", coupon
 
     def validate_coupon(self, code: str, user_id: int) -> Optional[int]:
         valid, disc, _, _ = self.validate_coupon_advanced(code, user_id, 999999)
@@ -1221,7 +1724,15 @@ class Database:
         coupon = self.coupons[coupon_code]
         if coupon.get("enable_referral_reward") and coupon.get("reward_user_id"):
             reward_uid = int(coupon["reward_user_id"])
-            reward_amount = int(coupon.get("reward_amount", 0))
+            reward_type = coupon.get("reward_type", "fixed")
+            raw_amt = float(coupon.get("reward_amount", 0))
+
+            if reward_type == "percentage":
+                order_amt = int(order.get("amount", 0))
+                reward_amount = max(1, int(round(order_amt * (raw_amt / 100.0))))
+            else:
+                reward_amount = int(raw_amt)
+
             if reward_amount > 0:
                 self.add_earning(reward_uid, reward_amount, coupon_code, order.get("order_id", "N/A"))
                 return (reward_uid, reward_amount, coupon_code)
@@ -1229,6 +1740,39 @@ class Database:
 
     def get_all_coupons(self) -> dict:
         return self.coupons
+
+    def get_coupon(self, code: str) -> Optional[dict]:
+        clean_code = code.upper().strip()
+        c = self.coupons.get(clean_code)
+        if c:
+            c_copy = dict(c)
+            c_copy["code"] = clean_code
+            return c_copy
+        return None
+
+    def set_coupon_status(self, code: str, status: str) -> bool:
+        clean_code = code.upper().strip()
+        if clean_code in self.coupons:
+            self.coupons[clean_code]["status"] = status
+            self._save(self.coupons, COUPONS_DB)
+            return True
+        return False
+
+    def deactivate_all_coupons(self) -> int:
+        count = 0
+        for code, c in self.coupons.items():
+            c["status"] = "inactive"
+            count += 1
+        self._save(self.coupons, COUPONS_DB)
+        return count
+
+    def activate_all_coupons(self) -> int:
+        count = 0
+        for code, c in self.coupons.items():
+            c["status"] = "active"
+            count += 1
+        self._save(self.coupons, COUPONS_DB)
+        return count
 
     def delete_coupon(self, code: str) -> bool:
         clean_code = code.upper().strip()
@@ -1316,7 +1860,7 @@ class Database:
             "total_withdrawn": total_withdrawn
         }
 
-    # ==================== ADMIN ROLE MANAGEMENT ====================
+    # ==================== ADMIN ROLE & PERMISSION MANAGEMENT ====================
     def get_admins(self) -> List[int]:
         for aid in ADMIN_IDS:
             if aid not in self.admins:
@@ -1332,6 +1876,64 @@ class Database:
             return False
         return uid in self.get_admins() or uid in ADMIN_IDS
 
+    def is_super_admin(self, user_id: int) -> bool:
+        if not user_id:
+            return False
+        try:
+            uid = int(user_id)
+        except ValueError:
+            return False
+        return len(ADMIN_IDS) > 0 and uid == ADMIN_IDS[0]
+
+    def get_admin_permissions(self, user_id: int) -> dict:
+        uid_str = str(user_id)
+        if self.is_super_admin(user_id):
+            return {k: True for k in ADMIN_PERMISSION_DEFINITIONS.keys()}
+
+        user_perms = self.admin_permissions.get(uid_str)
+        if user_perms is None:
+            user_perms = {k: True for k in ADMIN_PERMISSION_DEFINITIONS.keys()}
+            self.admin_permissions[uid_str] = user_perms
+            self._save_raw(self.admin_permissions, ADMIN_PERMISSIONS_DB)
+        else:
+            updated = False
+            for k in ADMIN_PERMISSION_DEFINITIONS.keys():
+                if k not in user_perms:
+                    user_perms[k] = True
+                    updated = True
+            if updated:
+                self.admin_permissions[uid_str] = user_perms
+                self._save_raw(self.admin_permissions, ADMIN_PERMISSIONS_DB)
+        return dict(user_perms)
+
+    def has_permission(self, user_id: int, perm_key: str) -> bool:
+        if not self.is_admin(user_id):
+            return False
+        if self.is_super_admin(user_id):
+            return True
+        perms = self.get_admin_permissions(user_id)
+        return bool(perms.get(perm_key, True))
+
+    def toggle_admin_permission(self, user_id: int, perm_key: str) -> bool:
+        uid_str = str(user_id)
+        perms = self.get_admin_permissions(user_id)
+        if perm_key in ADMIN_PERMISSION_DEFINITIONS:
+            perms[perm_key] = not perms.get(perm_key, True)
+            self.admin_permissions[uid_str] = perms
+            self._save_raw(self.admin_permissions, ADMIN_PERMISSIONS_DB)
+            return perms[perm_key]
+        return False
+
+    def set_admin_permission(self, user_id: int, perm_key: str, value: bool) -> bool:
+        uid_str = str(user_id)
+        perms = self.get_admin_permissions(user_id)
+        if perm_key in ADMIN_PERMISSION_DEFINITIONS:
+            perms[perm_key] = bool(value)
+            self.admin_permissions[uid_str] = perms
+            self._save_raw(self.admin_permissions, ADMIN_PERMISSIONS_DB)
+            return True
+        return False
+
     def add_admin(self, user_id: int, added_by: int = 0) -> bool:
         try:
             uid = int(user_id)
@@ -1340,6 +1942,8 @@ class Database:
         if uid not in self.admins:
             self.admins.append(uid)
             self._save_raw(self.admins, ADMINS_DB)
+            # Initialize default permissions
+            self.get_admin_permissions(uid)
             return True
         return False
 
@@ -1353,6 +1957,9 @@ class Database:
         if uid in self.admins:
             self.admins.remove(uid)
             self._save_raw(self.admins, ADMINS_DB)
+            if str(uid) in self.admin_permissions:
+                self.admin_permissions.pop(str(uid), None)
+                self._save_raw(self.admin_permissions, ADMIN_PERMISSIONS_DB)
             return True
         return False
 

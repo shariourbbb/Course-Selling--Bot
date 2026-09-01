@@ -19,10 +19,12 @@ ORDERS_DB = "orders.json"
 COUPONS_DB = "coupons.json"
 CART_DB = "cart.json"
 CATEGORIES_DB = "categories.json"
+EBOOK_CATEGORIES_DB = "ebook_categories.json"
 EBOOKS_DB = "ebooks.json"
 WITHDRAWALS_DB = "withdrawals.json"
 PAYMENTS_DB = "payments.json"
 ADMINS_DB = "admins.json"
+ADMIN_PERMISSIONS_DB = "admin_permissions.json"
 KEYBOARDS_DB = "keyboards.json"
 
 # উইথড্র সেটিংস

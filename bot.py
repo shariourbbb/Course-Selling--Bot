@@ -15,7 +15,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ContextTypes, filters
 )
-from database import Database
+from database import Database, ADMIN_PERMISSION_DEFINITIONS
 from config import (
     BOT_TOKEN, ADMIN_IDS, BOT_NAME, BOT_USERNAME,
     SUPPORT_USERNAME, MIN_WITHDRAW_AMOUNT
@@ -246,6 +246,85 @@ def get_welcome_inline_keyboard():
 
 # ==================== START & NAVIGATION ====================
 
+async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id if update.effective_user else 0
+
+    # Capture contextual info before clearing
+    active_dir = context.user_data.get("active_dir")
+    active_eb_dir = context.user_data.get("active_eb_dir")
+    origin_cb = context.user_data.get("course_origin_callback")
+
+    # Clean up ALL active user_data wizard/input state keys
+    state_keys = [
+        "admin_user_step", "admin_order_search_step", "admin_broadcasting_step",
+        "admin_broadcasting_mode", "bc_payload", "bc_target_mode", "bc_recipients",
+        "withdraw_step", "awaiting_coupon", "coupon_course", "checkout_type",
+        "awaiting_trxid", "pending_order_data",
+        "admin_add_course", "course_step", "new_course", "course_origin_callback",
+        "admin_add_ebook", "ebook_step", "new_ebook",
+        "admin_edit_course_id", "admin_edit_course_field",
+        "admin_edit_ebid", "admin_edit_ebook_field",
+        "admin_pay_step", "admin_pay_target_key", "new_pay_method",
+        "coupon_wizard_step", "new_coupon_data",
+        "awaiting_folder_rename", "rename_folder_old", "rename_folder_parent",
+        "awaiting_eb_folder_rename", "rename_eb_folder_old", "rename_eb_folder_parent",
+        "admin_msg_edit_key", "edit_msg_key", "edit_msg_name",
+        "admin_add_hbtn_step", "admin_add_hbtn_data", "admin_edit_hbtn_coords",
+        "admin_add_kb_step", "admin_edit_kb_step", "admin_add_category",
+        "admin_add_subcat", "admin_add_eb_subcat", "admin_edit_field",
+        "active_dir", "active_eb_dir"
+    ]
+    for k in state_keys:
+        context.user_data.pop(k, None)
+
+    msg = """<blockquote>✕ <b>Action Cancelled / বাতিল করা হয়েছে</b></blockquote>
+
+<blockquote>💡 নিচের বাটন চেপে আপনার প্রয়োজনীয় মেনুতে ফিরে যান:</blockquote>"""
+
+    keyboard = []
+    if is_admin(user_id):
+        if origin_cb and origin_cb != "adm_main":
+            keyboard.append([InlineKeyboardButton("« Return to Previous Menu", callback_data=origin_cb)])
+        elif active_dir:
+            keyboard.append([InlineKeyboardButton("« Return to Category", callback_data=f"adm_dir_{active_dir}")])
+        elif active_eb_dir:
+            keyboard.append([InlineKeyboardButton("« Return to E-Book Category", callback_data=f"adm_ebdir_{active_eb_dir}")])
+
+        keyboard.append([
+            InlineKeyboardButton("👑 Admin Dashboard", callback_data="adm_main"),
+            InlineKeyboardButton("⚜️ Main Menu", callback_data="back_to_main_menu")
+        ])
+    else:
+        keyboard.append([
+            InlineKeyboardButton("⚜️ Main Menu", callback_data="back_to_main_menu"),
+            InlineKeyboardButton("📚 Browse Courses", callback_data="browse_categories")
+        ])
+
+    if update.callback_query:
+        try:
+            await update.callback_query.answer("Action cancelled.")
+        except Exception:
+            pass
+        if update.callback_query.message.photo:
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass
+            await update.callback_query.message.reply_text(
+                msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await update.callback_query.edit_message_text(
+                msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    elif update.message:
+        await update.message.reply_text(
+            msg,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user:
@@ -296,18 +375,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             raw_welcome,
             parse_mode="Markdown",
-            reply_markup=main_menu_keyboard(user.id)
-        )
-        await update.message.reply_text(
-            "",
-            reply_markup=get_welcome_inline_keyboard()
+            reply_markup=InlineKeyboardMarkup(get_welcome_inline_keyboard().inline_keyboard)
         )
 
 
 # ==================== DYNAMIC CATEGORIES & SUB-CATEGORIES BROWSING ====================
 
 async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    categories = db.get_categories()
+    user_id = update.effective_user.id if update.effective_user else 0
+    show_inactive = is_admin(user_id)
+    categories = db.get_categories(include_inactive=show_inactive)
     keyboard = []
     
     if not categories:
@@ -316,7 +393,9 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "📂 **আপনার ব্যাচ/শ্রেণী নির্বাচন করুন:**"
         row = []
         for cat in categories:
-            row.append(InlineKeyboardButton(f"{cat}", callback_data=f"cat_{cat}"))
+            is_active = db.is_category_active(cat)
+            tag = " [OFF 🔴]" if (not is_active and show_inactive) else ""
+            row.append(InlineKeyboardButton(f"{cat}{tag}", callback_data=f"cat_{cat}"))
             if len(row) == 2:
                 keyboard.append(row)
                 row = []
@@ -345,16 +424,19 @@ async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_subcategories(query, category: str):
-    subcats = db.get_subcategories(category)
     user_id = query.from_user.id if hasattr(query, "from_user") and query.from_user else 0
     show_inactive = is_admin(user_id)
+    subcats = db.get_subcategories(category, include_inactive=show_inactive)
 
     keyboard = []
     row = []
     for sub in subcats:
+        sub_path = f"{category} > {sub}"
+        is_sub_active = db.is_category_active(sub_path)
+        tag = " [OFF 🔴]" if (not is_sub_active and show_inactive) else ""
         sub_courses = db.get_courses_by_filter(category=category, subcategory=sub, include_inactive=show_inactive)
         count = len(sub_courses)
-        row.append(InlineKeyboardButton(f"{sub} ({count})", callback_data=f"subcat_{category}_{sub}"))
+        row.append(InlineKeyboardButton(f"{sub}{tag} ({count})", callback_data=f"subcat_{category}_{sub}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
@@ -845,11 +927,11 @@ async def show_my_courses(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if link:
             dyn_link = await get_dynamic_access_link(context.bot, link, user_id)
             if dyn_link:
-                keyboard.append([InlineKeyboardButton(f"🚀 Access {c['name'][:18]}", url=dyn_link)])
+                keyboard.append([InlineKeyboardButton(f"  {c['name'][:18]}", url=dyn_link)])
         else:
             keyboard.append([InlineKeyboardButton(f"📖 View {c['name'][:18]}", callback_data=f"course_{c['id']}")])
 
-    msg += "\n💡 সরাসরি ক্লাসে জয়েন করতে উপরের বাটনে ক্লিক করুন।"
+    msg += "\n💡 Click above to join class directly."
     keyboard.append([InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")])
 
     if update.callback_query:
@@ -917,26 +999,97 @@ async def show_my_ebooks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def browse_ebooks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    cats = db.get_ebook_categories()
     all_ebs = db.get_all_ebooks()
-    user_id = update.effective_user.id
     
-    msg = "📚 **StudyMart ই-বুক ও স্টাডি মেটেরিয়াল লাইব্রেরী:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় ই-বুক বা নোট বেছে নিন:\n"
+    msg = """📚 **StudyMart ই-বুক ও স্টাডি মেটেরিয়াল লাইব্রেরী**
+━━━━━━━━━━━━━━━━━━━━
+📖 আপনার প্রয়োজনীয় ক্যাটাগরি বা বিষয় নির্বাচন করুন:"""
     keyboard = []
-    
-    if not all_ebs:
-        msg += "\n*বর্তমানে কোনো ই-বুক উপলব্ধ নেই।* \nখুব শীঘ্রই এখানে প্রিমিয়াম ই-বুক ও লেকচার নোটস যুক্ত করা হবে।"
-    else:
-        for eid, eb in all_ebs.items():
-            price = eb.get("price", 0)
-            price_tag = f" ({price} ৳)" if price > 0 else " (Free 🎁)"
-            
-            if db.has_user_ebook_access(user_id, eid):
-                keyboard.append([InlineKeyboardButton(f"✅ {eb['name']} (সংগৃহীত)", callback_data=f"view_eb_{eid}")])
-            else:
-                keyboard.append([InlineKeyboardButton(f"• {eb['name']}{price_tag}", callback_data=f"view_eb_{eid}")])
-                
+    row = []
+    for cat in cats:
+        eb_count = len(db.get_ebooks_by_category(cat))
+        row.append(InlineKeyboardButton(f"📁 {cat} ({eb_count})", callback_data=f"ebcat_{cat}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    if len(all_ebs) > 0:
+        keyboard.append([InlineKeyboardButton(f"📖 All E-Books ({len(all_ebs)})", callback_data="ebcat_ALL")])
+
     keyboard.append([InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")])
-    
+
+    if query:
+        if query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def show_ebooks_by_category(update: Update, context: ContextTypes.DEFAULT_TYPE, cat: str):
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    clean_path = str(cat).strip().replace(" / ", " > ").replace("/", " > ")
+    if clean_path.upper() == "ALL":
+        ebooks = [dict(eb, id=eid) for eid, eb in db.get_all_ebooks().items() if eb.get("status") != "inactive"]
+        subfolders = []
+    else:
+        subfolders = db.get_ebook_sub_folders(clean_path)
+        ebooks = db.get_ebooks_by_folder(clean_path, include_inactive=False)
+
+    segments = [s.strip() for s in clean_path.split(" > ") if s.strip()]
+    parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
+
+    cat_title = "সকল ই-বুক" if clean_path.upper() == "ALL" else f"ক্যাটাগরি: {' ➔ '.join(segments)}"
+    msg = f"""📁 **{cat_title}**
+━━━━━━━━━━━━━━━━━━━━
+আপনার পছন্দের ই-বুক বা স্টাডি মেটেরিয়াল নির্বাচন করুন:"""
+
+    keyboard = []
+
+    # Subfolders (if any)
+    row = []
+    for sf in subfolders:
+        child_path = f"{clean_path} > {sf}" if clean_path else sf
+        child_ebooks = db.get_ebooks_by_folder(child_path, include_inactive=False)
+        child_sub_count = len(db.get_ebook_sub_folders(child_path))
+        total_items = len(child_ebooks) if len(child_ebooks) > 0 else child_sub_count
+        badge = f" ({total_items})" if total_items > 0 else ""
+        row.append(InlineKeyboardButton(f"📁 {sf}{badge}", callback_data=f"ebcat_{child_path}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    # E-Books in this folder
+    for eb in ebooks:
+        eid = eb.get("id")
+        price = eb.get("price", 0)
+        price_tag = f" (৳{price})" if price > 0 else " (Free 🎁)"
+
+        if db.has_user_ebook_access(user_id, eid):
+            keyboard.append([InlineKeyboardButton(f"✅ {eb['name']} (সংগৃহীত)", callback_data=f"view_eb_{eid}")])
+        else:
+            keyboard.append([InlineKeyboardButton(f"• {eb['name']}{price_tag}", callback_data=f"view_eb_{eid}")])
+
+    if not subfolders and not ebooks:
+        msg += "\n\n*(বর্তমানে এই ক্যাটাগরিতে কোনো ই-বুক নেই)*"
+
+    if len(segments) > 1:
+        keyboard.append([InlineKeyboardButton(f"« Back to {segments[-2]}", callback_data=f"ebcat_{parent_path}")])
+    keyboard.append([InlineKeyboardButton("« Back to Categories", callback_data="browse_ebooks")])
+    keyboard.append([InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")])
+
     if query:
         if query.message.photo:
             try:
@@ -954,46 +1107,50 @@ async def view_ebook_details(update: Update, context: ContextTypes.DEFAULT_TYPE,
     query = update.callback_query
     eb = db.get_ebook(eb_id)
     if not eb:
-        await query.answer("E-Book not found!")
+        if query:
+            await query.answer("E-Book not found!", show_alert=True)
         return
-        
+
     user_id = update.effective_user.id
     price = eb.get("price", 0)
     has_access = db.has_user_ebook_access(user_id, eb_id)
-    
-    msg = f"""📘 **{eb['name']}**
+    cat = eb.get("category", "General")
+
+    msg = f"""📖 **{eb['name']}**
 ━━━━━━━━━━━━━━━━━━━━
 
-📂 **ক্যাটাগরি:** {eb.get('category', 'General')}
-💰 **মূল্য:** {f"৳ {price}" if price > 0 else "বিনামূল্যে (Free 🎁)"}
+📂 **ক্যাটাগরি:** `{cat}`
+💰 **মূল্য:** {f"৳{price}" if price > 0 else "বিনামূল্যে (Free 🎁)"}
 
 📝 **বিবরণ:**
-{eb.get('description', 'কোনো বিবরণ দেওয়া নেই।')}"""
+{eb.get('description', 'প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।')}"""
 
     keyboard = []
     if has_access:
         if eb.get("file_id"):
-            keyboard.append([InlineKeyboardButton("📥 Download (PDF)", callback_data=f"ebdl_{eb_id}")])
-        else:
-            link = eb.get("access_link", "")
-            if link:
-                keyboard.append([InlineKeyboardButton("📥 Download / View Link", url=link)])
+            keyboard.append([InlineKeyboardButton("📥 Download PDF (ফাইল ডাউনলোড)", callback_data=f"ebdl_{eb_id}")])
+        if eb.get("access_link"):
+            keyboard.append([InlineKeyboardButton("🔗 Open Drive Link", url=eb["access_link"])])
     else:
         if price == 0:
-            keyboard.append([InlineKeyboardButton("🎁 Get Free Access", callback_data=f"unlock_free_eb_{eb_id}")])
+            keyboard.append([InlineKeyboardButton("🎁 Get Free Access (সংগ্রহ করুন)", callback_data=f"unlock_free_eb_{eb_id}")])
         else:
             keyboard.append([InlineKeyboardButton(f"💳 Buy E-Book — ৳{price}", callback_data=f"buy_eb_{eb_id}")])
-            
-    keyboard.append([InlineKeyboardButton("◀️ Back to E-Books", callback_data="browse_ebooks")])
-    
-    if query.message.photo:
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    keyboard.append([InlineKeyboardButton("« Back", callback_data=f"ebcat_{cat}")])
+    keyboard.append([InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")])
+
+    if query:
+        if query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ==================== CART OPERATIONS ====================
@@ -1022,20 +1179,41 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     total = sum(item.get("price", 0) for item in items)
+    original_total = total
+    applied_coupon = context.user_data.get("applied_coupon")
+    discount_val = 0
+    if applied_coupon:
+        course_ids = [i['id'] for i in items]
+        valid, discount, message, coupon_obj = db.validate_coupon_advanced(
+            applied_coupon, user_id, total, "All", course_ids=course_ids
+        )
+        if valid:
+            discount_val = discount
+            total = max(0, total - discount)
+        else:
+            context.user_data.pop("applied_coupon", None)
+            applied_coupon = None
+
     msg = f"🛒 **শপিং কার্ট ({len(items)} টি আইটেম):**\n\n"
     keyboard = []
 
     for idx, item in enumerate(items, 1):
-        msg += f"{idx}. 📘 **{item['name']}** - {item['price']} ৳\n"
+        msg += f"{idx}.  **{item['name']}** - {item['price']} ৳\n"
         keyboard.append([
             InlineKeyboardButton(f"❌ Remove: {item['name'][:18]}", callback_data=f"remcart_{item['id']}")
         ])
 
-    msg += f"\n💰 **সর্বমোট মূল্য:** **{total} ৳ BDT**"
+    if discount_val > 0:
+        msg += f"\n💰 **মোট মূল্য:** {original_total} ৳ BDT\n"
+        msg += f"🎟 **কুপন ছাড়:** -{discount_val} ৳ (`{applied_coupon}`)\n"
+        msg += f"✅ **সর্বমোট পরিশোধযোগ্য:** **{total} ৳ BDT**"
+    else:
+        msg += f"\n💰 **সর্বমোট মূল্য:** **{total} ৳ BDT**"
 
+    coupon_btn_text = f"🎟 Coupon: {applied_coupon} ✅" if applied_coupon else "🎟 Apply Coupon"
     keyboard.append([
         InlineKeyboardButton("🛍️ Checkout All", callback_data="checkout_cart"),
-        InlineKeyboardButton("🗑️ Clear Cart", callback_data="clear_cart")
+        InlineKeyboardButton(coupon_btn_text, callback_data="coupon_cart")
     ])
     keyboard.append([InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")])
 
@@ -1168,16 +1346,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup(custom_kb)
             )
         else:
-            await query.message.reply_text(
-                raw_welcome,
-                parse_mode="Markdown",
-                reply_markup=main_menu_keyboard(user_id)
-            )
             welcome_kb = get_welcome_inline_keyboard()
             if welcome_kb and welcome_kb.inline_keyboard:
                 await query.message.reply_text(
-                    "",
+                    raw_welcome,
+                    parse_mode="Markdown",
                     reply_markup=welcome_kb
+                )
+            else:
+                await query.message.reply_text(
+                    raw_welcome,
+                    parse_mode="Markdown",
+                    reply_markup=main_menu_keyboard(user_id)
                 )
 
     elif data == "profile_nav":
@@ -1368,18 +1548,36 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
         context.user_data["category"] = category
         context.user_data["subcategory"] = subcat
 
-        if subcat != "ALL" and subcat != "":
+        is_direct_all = False
+        if subcat.endswith("_ALLDIRECT"):
+            subcat = subcat.replace("_ALLDIRECT", "")
+            is_direct_all = True
+
+        if subcat != "ALL" and subcat != "" and not is_direct_all:
             nested_path = f"{category} > {subcat}"
-            nested_subcats = db.get_subcategories(nested_path)
+            nested_subcats = db.get_subcategories(nested_path, include_inactive=is_admin(user_id))
             if nested_subcats:
                 keyboard = []
                 for child in nested_subcats:
                     child_path = f"{subcat} > {child}"
+                    full_child_path = f"{category} > {child_path}"
+                    is_child_active = db.is_category_active(full_child_path)
+                    child_tag = " [OFF 🔴]" if (not is_child_active and is_admin(user_id)) else ""
                     child_count = len(db.get_courses_by_filter(category=category, subcategory=child_path, include_inactive=is_admin(user_id)))
                     keyboard.append([
-                        InlineKeyboardButton(f"{child} ({child_count})", callback_data=f"subcat_{category}_{child_path}")
+                        InlineKeyboardButton(f"{child}{child_tag} ({child_count})", callback_data=f"subcat_{category}_{child_path}")
                     ])
-                keyboard.append([InlineKeyboardButton("« Back", callback_data=f"cat_{category}")])
+
+                # View All Courses button for this subfolder/branch
+                sub_leaf_name = subcat.split(" > ")[-1]
+                all_sub_courses = db.get_courses_by_filter(category=category, subcategory=subcat, include_inactive=is_admin(user_id))
+                keyboard.append([
+                    InlineKeyboardButton(f"🎓 View All {sub_leaf_name} Courses ({len(all_sub_courses)})", callback_data=f"subcat_{category}_{subcat}_ALLDIRECT")
+                ])
+
+                parent_segs = subcat.split(" > ")
+                back_cb = f"subcat_{category}_{' > '.join(parent_segs[:-1])}" if len(parent_segs) > 1 else f"cat_{category}"
+                keyboard.append([InlineKeyboardButton("« Back", callback_data=back_cb)])
                 msg_text = f"📂 **{category} | {subcat} এর বিষয় / সাব-ক্যাটাগরি:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা প্রোগ্রাম বেছে নিন:"
                 if query.message.photo:
                     try:
@@ -1398,19 +1596,24 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
 
         keyboard = []
         if not courses:
-            keyboard.append([InlineKeyboardButton("« Back", callback_data=f"cat_{category}")])
+            parent_segs = subcat.split(" > ") if subcat != "ALL" else []
+            back_cb = f"subcat_{category}_{' > '.join(parent_segs[:-1])}" if len(parent_segs) > 1 else f"cat_{category}"
+            keyboard.append([InlineKeyboardButton("« Back", callback_data=back_cb)])
             msg_text = f"❌ দুঃখিত, **{category} ➡️ {sub_title}** এ বর্তমানে কোনো কোর্স পাওয়া যায়নি।"
         else:
             for course in courses:
                 price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
                 is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+                status_tag = "🔴 " if (course.get("status") == "inactive" and is_admin(user_id)) else ""
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"{course['name']}{price_tag}{is_bought}",
+                        f"{status_tag}{course['name']}{price_tag}{is_bought}",
                         callback_data=f"course_{course['id']}"
                     )
                 ])
-            keyboard.append([InlineKeyboardButton("« Back", callback_data=f"cat_{category}")])
+            parent_segs = subcat.split(" > ") if subcat != "ALL" else []
+            back_cb = f"subcat_{category}_{' > '.join(parent_segs[:-1])}" if len(parent_segs) > 1 else f"cat_{category}"
+            keyboard.append([InlineKeyboardButton("« Back", callback_data=back_cb)])
             msg_text = f"📚 **{category} | {sub_title} এর কোর্সসমূহ:**\n━━━━━━━━━━━━━━━━━━━━\nযে কোর্সের তথ্য দেখতে চান সেটিতে ক্লিক করুন:"
 
         if is_admin(user_id):
@@ -1466,8 +1669,13 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
         await query.answer("✕ আইটেম মুছে ফেলা হয়েছে!", show_alert=True)
         await show_cart(update, context)
 
+    elif data in ("view_cart", "show_cart", "cart"):
+        await show_cart(update, context)
+        return
+
     elif data == "clear_cart":
         db.clear_cart(user_id)
+        context.user_data.pop("applied_coupon", None)
         await query.answer("✕ কার্ট খালি করা হয়েছে!", show_alert=True)
         await show_cart(update, context)
 
@@ -1490,7 +1698,7 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
         discount_val = 0
         if applied_coupon:
             valid, discount, message, coupon_obj = db.validate_coupon_advanced(
-                applied_coupon, user_id, total, "All"
+                applied_coupon, user_id, total, "All", course_ids=course_ids
             )
             if valid:
                 discount_val = discount
@@ -1501,11 +1709,6 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
         methods = db.get_payment_methods(active_only=True)
         keyboard = []
 
-        if not applied_coupon:
-            keyboard.append([InlineKeyboardButton("🎟 Apply Coupon", callback_data="coupon_cart")])
-        else:
-            keyboard.append([InlineKeyboardButton(f"🎟 Coupon: {applied_coupon} (Applied ✅)", callback_data="coupon_cart")])
-
         for method in methods:
             m_key = method['key'].lower()
             emoji = "💗" if "bkash" in m_key else "🟠" if "nagad" in m_key else "🟣" if "rocket" in m_key else "💳"
@@ -1515,21 +1718,32 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
                     callback_data=f"pay_{method['key']}"
                 )
             ])
+
+        if not applied_coupon:
+            keyboard.append([InlineKeyboardButton("🎟 Apply Coupon", callback_data="coupon_cart")])
+        else:
+            keyboard.append([InlineKeyboardButton(f"🎟 Coupon: {applied_coupon} (Applied ✅)", callback_data="coupon_cart")])
+
         keyboard.append([InlineKeyboardButton("◀️ Back", callback_data="cancel_buy")])
+
+        items_list = "\n".join([f"•  <b>{html.escape(i['name'])}</b> — ৳{i['price']}" for i in items])
 
         if discount_val > 0:
             msg = f"""💳 <b>Select payment method:</b>
 
-📦 <b>Cart Items:</b> {len(items)} Courses
+📦 <b>Cart Items ({len(items)} Courses):</b>
+{items_list}
+
 💰 <b>Price:</b> ৳{original_total}
 🎟 <b>Coupon Discount:</b> -৳{discount_val}
 ✅ <b>Total:</b> ৳{total}"""
         else:
             msg = f"""💳 <b>Select payment method:</b>
 
-📦 <b>Cart Items:</b> {len(items)} Courses
-💰 <b>Price:</b> ৳{total}
-✅ <b>Total:</b> ৳{total}"""
+📦 <b>Cart Items ({len(items)} Courses):</b>
+{items_list}
+
+💰 <b>Total:</b> ৳{total}"""
 
         course_image = items[0].get("image") if items else None
         await send_rich_course_message(query, msg, InlineKeyboardMarkup(keyboard), image=course_image, is_edit=True)
@@ -1546,14 +1760,14 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
             if access_link:
                 dyn_link = await get_dynamic_access_link(context.bot, access_link, user_id)
                 if dyn_link:
-                    keyboard.append([InlineKeyboardButton("🚀 Go to Course", url=dyn_link)])
+                    keyboard.append([InlineKeyboardButton(" Go to Course", url=dyn_link)])
             keyboard.append([InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav")])
 
-            msg = f"""🎉 **অভিনন্দন! কোর্সটি আপনার প্রোফাইলে যুক্ত হয়েছে!**
+            msg = f"""🎉 ** Congratulations! Course added to your profile!**
 
-📘 **কোর্স:** {course['name']}
+ **Course:** {course['name']}
 
-👇 ক্লাসে যুক্ত হতে নিচের বাটনে চাপ দিন:"""
+👇 Click the button below to join:"""
 
             if query.message.photo:
                 try:
@@ -1568,10 +1782,26 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
         course_id = data.replace("coupon_", "")
         context.user_data["awaiting_coupon"] = True
         context.user_data["coupon_course"] = course_id
-        text = """🎟 **Coupon Code**
+
+        if course_id == "cart":
+            items = db.get_cart(user_id)
+            if not items:
+                await query.answer("❌ আপনার কার্ট খালি!", show_alert=True)
+                return
+            total = sum(item.get("price", 0) for item in items)
+            context.user_data["checkout_courses"] = [i['id'] for i in items]
+            context.user_data["checkout_total"] = total
+            text = """🎟 **Coupon Code**
+━━━━━━━━━━━━━━━━━━━━
+
+Enter coupon code to get discount on your cart."""
+            keyboard = [[InlineKeyboardButton("◀️ Back to Cart", callback_data="view_cart")]]
+        else:
+            text = """🎟 **Coupon Code**
 
 Enter your code to claim your discount."""
-        keyboard = [[InlineKeyboardButton("◀️ Back to Course", callback_data=f"course_{course_id}")]]
+            keyboard = [[InlineKeyboardButton("◀️ Back to Course", callback_data=f"course_{course_id}")]]
+
         if query.message.photo:
             try:
                 await query.message.delete()
@@ -1583,6 +1813,11 @@ Enter your code to claim your discount."""
 
     elif data == "browse_ebooks":
         await browse_ebooks(update, context)
+        return
+
+    elif data.startswith("ebcat_"):
+        cat = data.replace("ebcat_", "")
+        await show_ebooks_by_category(update, context, cat)
         return
 
     elif data.startswith("view_eb_"):
@@ -1677,7 +1912,42 @@ Enter your code to claim your discount."""
     elif data.startswith("pay_"):
         method_key = data.replace("pay_", "")
         total = context.user_data.get("checkout_total", 0)
-        c_name = context.user_data.get("checkout_course_name", "Course")
+        c_type = context.user_data.get("checkout_type")
+        c_name = context.user_data.get("checkout_course_name")
+
+        if not c_type:
+            if context.user_data.get("checkout_courses") or context.user_data.get("coupon_course") == "cart":
+                c_type = "cart"
+                context.user_data["checkout_type"] = "cart"
+            elif context.user_data.get("checkout_course") or context.user_data.get("current_course") or context.user_data.get("coupon_course"):
+                c_type = "single"
+                context.user_data["checkout_type"] = "single"
+
+        if c_type == "cart":
+            items = db.get_cart(user_id)
+            if items:
+                c_name = "\n" + "\n".join([f"  • {html.escape(i['name'])}" for i in items])
+                context.user_data["checkout_courses"] = [i['id'] for i in items]
+                context.user_data["checkout_course_name"] = ", ".join([i['name'] for i in items])
+            elif not c_name:
+                c_name = "Cart Items"
+        else:
+            cid = context.user_data.get("checkout_course") or context.user_data.get("current_course") or context.user_data.get("coupon_course")
+            if cid and cid != "cart":
+                c_obj = db.get_course(cid)
+                if c_obj:
+                    c_name = html.escape(c_obj.get("name", "Course"))
+                    context.user_data["checkout_course"] = cid
+                    context.user_data["checkout_course_name"] = c_obj.get("name", "Course")
+            if not c_name or c_name == "Course":
+                items = db.get_cart(user_id)
+                if items:
+                    c_type = "cart"
+                    context.user_data["checkout_type"] = "cart"
+                    c_name = "\n" + "\n".join([f"  • {html.escape(i['name'])}" for i in items])
+
+        if not c_name:
+            c_name = "Course"
 
         method_obj = db.get_payment_method(method_key)
         method_name = method_obj["name"] if method_obj else method_key.title()
@@ -1690,9 +1960,10 @@ Enter your code to claim your discount."""
         context.user_data["pay_amount"] = total
 
         method_emoji = "💗" if "bkash" in method_key.lower() else "🟠" if "nagad" in method_key.lower() else "🟣" if "rocket" in method_key.lower() else "💳"
+        course_label = "Courses" if c_type == "cart" else "Course"
         instructions = f"""{method_emoji} <b>{method_name} Payment Instruction</b>
 ━━━━━━━━━━━━━━━━━━━━━
-📘 <b>Course:</b> {c_name}
+📘 <b>{course_label}:</b> {c_name}
 📱 <b>Number:</b> <code>{method_number}</code>
 💰 <b>Amount:</b> ৳<code>{total}</code>
 
@@ -1701,7 +1972,7 @@ Enter your code to claim your discount."""
 {payment_note}"""
 
         keyboard = [
-            [InlineKeyboardButton("📋 Copy Number", callback_data=f"copy_num_{method_number}", copy_text=CopyTextButton(text=method_number))],
+            
             [InlineKeyboardButton("◀️ Back", callback_data="cancel_trxid")]
         ]
 
@@ -1957,11 +2228,18 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = update.message
     text = msg.text.strip() if msg and msg.text else ""
+    caption = msg.caption.strip() if msg and msg.caption else ""
     user_id = update.effective_user.id
+
+    # Universal Cancel check
+    check_str = (text or caption).strip().lower()
+    if check_str in ["/cancel", "cancel", "বাতিল", "❌ cancel", "abort", "/stop"]:
+        await cancel_cmd(update, context)
+        return
 
     # Cancel any active wizard if a menu command or button is pressed
     if text:
-        is_command = text.startswith("/") and text.lower() != "/cancel"
+        is_command = text.startswith("/")
         is_kb_button = False
         
         # Check standard navigation buttons
@@ -2029,6 +2307,10 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_admin_subcategory_creation(update, context)
         return
 
+    if context.user_data.get("admin_add_eb_subcat"):
+        await handle_admin_ebook_subcategory_creation(update, context)
+        return
+
     if context.user_data.get("awaiting_folder_rename"):
         text = update.message.text.strip()
         if text == "/cancel":
@@ -2052,6 +2334,32 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 async def answer(self, *a, **kw): pass
                 async def edit_message_text(self, *a, **kw): return await self.message.reply_text(*a, **kw)
             await render_admin_folder_directory(FakeQ(update.message), context, active_dir)
+        else:
+            await update.message.reply_text("❌ Rename failed. Name may already exist.", reply_markup=main_menu_keyboard(user_id))
+        return
+
+    if context.user_data.get("awaiting_eb_folder_rename"):
+        text = update.message.text.strip()
+        if text == "/cancel":
+            context.user_data.pop("awaiting_eb_folder_rename", None)
+            context.user_data.pop("rename_eb_folder_old", None)
+            context.user_data.pop("rename_eb_folder_parent", None)
+            await update.message.reply_text("✕ Rename cancelled.", reply_markup=main_menu_keyboard(user_id))
+            return
+        old_name = context.user_data.get("rename_eb_folder_old", "")
+        parent_path = context.user_data.get("rename_eb_folder_parent", "")
+        success = db.rename_ebook_folder(parent_path, old_name, text)
+        context.user_data.pop("awaiting_eb_folder_rename", None)
+        context.user_data.pop("rename_eb_folder_old", None)
+        context.user_data.pop("rename_eb_folder_parent", None)
+        if success:
+            active_dir = parent_path + " > " + text if parent_path else text
+            await update.message.reply_text(f"✅ Renamed to '{text}'!", reply_markup=main_menu_keyboard(user_id))
+            class FakeEBQ:
+                def __init__(self, msg): self.message = msg; self.data = "adm_ebdir_" + active_dir; self.from_user = update.effective_user; self.id = "0"
+                async def answer(self, *a, **kw): pass
+                async def edit_message_text(self, *a, **kw): return await self.message.reply_text(*a, **kw)
+            await render_admin_ebook_folder_directory(FakeEBQ(update.message), context, active_dir)
         else:
             await update.message.reply_text("❌ Rename failed. Name may already exist.", reply_markup=main_menu_keyboard(user_id))
         return
@@ -2318,20 +2626,25 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_subcategories_message(update: Update, category: str):
-    subcats = db.get_subcategories(category)
+    user_id = update.effective_user.id if update.effective_user else 0
+    show_inactive = is_admin(user_id)
+    subcats = db.get_subcategories(category, include_inactive=show_inactive)
     keyboard = []
     row = []
-    user_id = update.effective_user.id if update.effective_user else 0
     for sub in subcats:
-        sub_courses = db.get_courses_by_filter(category=category, subcategory=sub, include_inactive=is_admin(user_id))
+        sub_path = f"{category} > {sub}"
+        is_sub_active = db.is_category_active(sub_path)
+        tag = " [OFF 🔴]" if (not is_sub_active and show_inactive) else ""
+        sub_courses = db.get_courses_by_filter(category=category, subcategory=sub, include_inactive=show_inactive)
         count = len(sub_courses)
-        row.append(InlineKeyboardButton(f"• {sub} ({count})", callback_data=f"subcat_{category}_{sub}"))
+        row.append(InlineKeyboardButton(f"{sub}{tag} ({count})", callback_data=f"subcat_{category}_{sub}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
     if row:
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton(f"❖ View All {category} Courses", callback_data=f"subcat_{category}_ALL")])
+    all_c = db.get_courses_by_filter(category=category, include_inactive=show_inactive)
+    keyboard.append([InlineKeyboardButton(f"🎓 View All {category} Courses ({len(all_c)})", callback_data=f"subcat_{category}_ALL")])
     keyboard.append([InlineKeyboardButton("« All Categories", callback_data="back_to_categories")])
 
     text = f"📂 **{category} এর বিষয় / সাব-ক্যাটাগরি:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা প্রোগ্রাম বেছে নিন:"
@@ -2349,14 +2662,27 @@ async def handle_coupon_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     course_id = context.user_data.get("coupon_course")
     if course_id == "cart":
-        cart_total = context.user_data.get("checkout_total", 0)
+        items = db.get_cart(user_id)
+        if not items:
+            await update.message.reply_text("❌ Your cart is empty.", reply_markup=main_menu_keyboard(user_id))
+            return
+        courses_in_order = [i['id'] for i in items]
+        cart_total = sum(item.get("price", 0) for item in items)
+        context.user_data["checkout_type"] = "cart"
+        context.user_data["checkout_courses"] = courses_in_order
+        context.user_data["checkout_course_name"] = ", ".join([i['name'] for i in items])
+        context.user_data["checkout_total"] = cart_total
+
         valid, discount, message, coupon_obj = db.validate_coupon_advanced(
-            text, user_id, cart_total, "All"
+            text, user_id, cart_total, "All", course_ids=courses_in_order
         )
         if valid:
             new_total = max(0, cart_total - discount)
             context.user_data["checkout_total"] = new_total
             context.user_data["applied_coupon"] = text.upper()
+            context.user_data["checkout_type"] = "cart"
+            context.user_data["checkout_courses"] = courses_in_order
+            context.user_data["checkout_course_name"] = ", ".join([i['name'] for i in items])
 
             if new_total == 0:
                 courses_in_order = context.user_data.get("checkout_courses", [])
@@ -2393,7 +2719,6 @@ async def handle_coupon_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             methods = db.get_payment_methods(active_only=True)
             keyboard = []
-            keyboard.append([InlineKeyboardButton(f"🎟 Coupon: {text.upper()} (Applied ✅)", callback_data="coupon_cart")])
             for method in methods:
                 m_key = method['key'].lower()
                 emoji = "💗" if "bkash" in m_key else "🟠" if "nagad" in m_key else "🟣" if "rocket" in m_key else "💳"
@@ -2403,12 +2728,17 @@ async def handle_coupon_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                         callback_data=f"pay_{method['key']}"
                     )
                 ])
+            keyboard.append([InlineKeyboardButton(f"🎟 Coupon: {text.upper()} (Applied ✅)", callback_data="coupon_cart")])
             keyboard.append([InlineKeyboardButton("◀️ Back to Cart", callback_data="view_cart")])
 
+            items = db.get_cart(user_id)
+            items_list = "\n".join([f"•  <b>{html.escape(i['name'])}</b> — ৳{i['price']}" for i in items])
             discount_val = cart_total - new_total
             msg = f"""💳 <b>Select payment method:</b>
 
-📦 <b>Cart Items:</b> {len(context.user_data.get("checkout_courses", []))} Courses
+📦 <b>Cart Items ({len(items)} Courses):</b>
+{items_list}
+
 💰 <b>Price:</b> ৳{cart_total}
 🎟 <b>Coupon Discount:</b> -৳{discount_val}
 ✅ <b>Total:</b> ৳{new_total}"""
@@ -2420,36 +2750,42 @@ async def handle_coupon_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
             return
 
-        err_msg = "❌ Invalid Coupon Code. Please try again."
-        if "exist" in message.lower() or "সঠিক" in message:
-            err_msg = "❌ Coupon code does not exist."
-        elif "limit" in message.lower() or "সীমা" in message:
-            err_msg = "❌ Coupon usage limit reached."
-        elif "expired" in message.lower() or "মেয়াদ" in message:
-            err_msg = "❌ Coupon has expired."
-        elif "already" in message.lower() or "ইতিমধ্যে" in message:
-            err_msg = "❌ Coupon already used."
-        else:
-            err_msg = f"❌ {message}"
+        clean_msg = message.lstrip("❌ ").strip()
+        err_msg = f"❌ {clean_msg}"
 
+        k_err = [
+            [InlineKeyboardButton("🔄 Try Again", callback_data="coupon_cart")],
+            [InlineKeyboardButton("🛒 Back to Cart", callback_data="view_cart")]
+        ]
         await update.message.reply_text(
             err_msg,
-            reply_markup=main_menu_keyboard(user_id)
+            reply_markup=InlineKeyboardMarkup(k_err)
         )
         return
 
     course = db.get_course(course_id) if course_id else None
+    if not course:
+        cid = context.user_data.get("current_course") or context.user_data.get("checkout_course")
+        course = db.get_course(cid) if cid else None
+        if course:
+            course_id = str(course.get("id", cid))
+
     course_price = course.get("price", 0) if course else 0
     course_cat = course.get("category", "") if course else ""
+    course_name = course.get("name", "Course") if course else "Course"
 
     valid, discount, message, coupon_obj = db.validate_coupon_advanced(
-        text, user_id, course_price, course_cat
+        text, user_id, course_price, course_cat, course_id=course_id
     )
 
     if valid and course:
         new_price = max(0, course_price - discount)
         context.user_data["discounted_price"] = new_price
         context.user_data["applied_coupon"] = text.upper()
+        context.user_data["checkout_type"] = "single"
+        context.user_data["checkout_course"] = course_id
+        context.user_data["checkout_course_name"] = course_name
+        context.user_data["checkout_total"] = new_price
 
         if new_price == 0:
             db.add_purchase(user_id, course_id)
@@ -2497,6 +2833,7 @@ async def handle_coupon_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                     callback_data=f"pay_{method['key']}"
                 )
             ])
+        keyboard.append([InlineKeyboardButton(f"🎟 Coupon: {text.upper()} (Applied ✅)", callback_data=f"coupon_{course_id}")])
         keyboard.append([InlineKeyboardButton("◀️ Back", callback_data="cancel_buy")])
 
         discount_val = course_price - new_price
@@ -2524,21 +2861,16 @@ async def handle_coupon_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return
 
-    err_msg = "❌ Invalid Coupon Code. Please try again."
-    if "exist" in message.lower() or "সঠিক" in message:
-        err_msg = "❌ Coupon code does not exist."
-    elif "limit" in message.lower() or "সীমা" in message:
-        err_msg = "❌ Coupon usage limit reached."
-    elif "expired" in message.lower() or "মেয়াদ" in message:
-        err_msg = "❌ Coupon has expired."
-    elif "already" in message.lower() or "ইতিমধ্যে" in message:
-        err_msg = "❌ Coupon already used."
-    else:
-        err_msg = f"❌ {message}"
+    clean_msg = message.lstrip("❌ ").strip()
+    err_msg = f"❌ {clean_msg}"
 
+    k_err = [
+        [InlineKeyboardButton("🔄 Try Again", callback_data=f"coupon_{course_id}")],
+        [InlineKeyboardButton("◀️ Back to Course", callback_data=f"course_{course_id}")]
+    ]
     await update.message.reply_text(
         err_msg,
-        reply_markup=main_menu_keyboard(user_id)
+        reply_markup=InlineKeyboardMarkup(k_err)
     )
 
 
@@ -2713,20 +3045,18 @@ async def handle_trxid_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data.pop("checkout_courses", None)
     context.user_data.pop("applied_coupon", None)
 
+    course_label = "Courses" if checkout_type == "cart" else "Course"
     await update.message.reply_text(
-        f"""✅ **আপনার অর্ডারটি সফলভাবে জমা হয়েছে!**
+        f"""✅ **Order Submitted Successfully!**
 ━━━━━━━━━━━━━━━━━━━━
 
 📦 **Order ID:** `{format_order_id_display(order_id)}`
-📖 **কোর্স:** {course_name}
-💰 **পরিশোধিত টাকা:** {total} ৳
-💳 **মাধ্যম:** {method}
+📘 **{course_label}:** {course_name}
+💰 **Amount:** {total} ৳
+💳 **Method:** {method}
 🔑 **TrxID:** `{trxid}`
 
-⏳ **এডমিন খুব শীঘ্রই আপনার TrxID যাচাই করে কোর্সটি অ্যাপ্রুভ করবেন।**
-অ্যাপ্রুভ হওয়ার সাথে সাথে আপনি এখানে নোটিফিকেশন ও অ্যাক্সেস লিংক পেয়ে যাবেন।
-
-📌 অর্ডারের স্ট্যাটাস জানতে: `/status {format_order_id_display(order_id)}`""",
+⏳ Admin will verify your payment soon. You'll receive course access once approved!""",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard(user_id)
     )
@@ -2762,6 +3092,72 @@ async def handle_trxid_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 # ==================== ADMIN PANEL (ENGLISH CLEAN BUTTONS) ====================
 
+def get_admin_dashboard_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    keyboard = []
+
+    # Row 1: Content
+    r1 = []
+    if db.has_permission(user_id, "course_manage"):
+        r1.append(InlineKeyboardButton("📚 Courses", callback_data="adm_courses"))
+    if db.has_permission(user_id, "ebook_manage"):
+        r1.append(InlineKeyboardButton("📖 E-Books", callback_data="adm_ebooks"))
+    if db.has_permission(user_id, "category_manage"):
+        r1.append(InlineKeyboardButton("📁 Categories", callback_data="adm_categories"))
+    if r1:
+        keyboard.append(r1)
+
+    # Row 2: Orders & Coupons
+    r2 = []
+    if db.has_permission(user_id, "orders"):
+        r2.append(InlineKeyboardButton("⏳ Pending Orders", callback_data="adm_pending_orders"))
+    if db.has_permission(user_id, "coupon"):
+        r2.append(InlineKeyboardButton("🎟️ Coupons & Promo", callback_data="adm_coupons"))
+    if r2:
+        keyboard.append(r2)
+
+    # Row 3: Payments & Withdrawals
+    r3 = []
+    if db.has_permission(user_id, "payment_settings"):
+        r3.append(InlineKeyboardButton("💸 Withdrawals", callback_data="adm_withdrawals"))
+        r3.append(InlineKeyboardButton("⚙️ Payment Gateway", callback_data="adm_payments"))
+    if r3:
+        keyboard.append(r3)
+
+    # Row 4: Users & Broadcast
+    r4 = []
+    if db.has_permission(user_id, "user_manage") or db.has_permission(user_id, "admin_manage") or db.has_permission(user_id, "admin_permission"):
+        r4.append(InlineKeyboardButton("👥 User Management", callback_data="adm_users"))
+    if db.has_permission(user_id, "broadcast"):
+        r4.append(InlineKeyboardButton("📢 Broadcast Notice", callback_data="adm_broadcast"))
+    if r4:
+        keyboard.append(r4)
+
+    # Row 5: Analytics & Orders
+    r5 = []
+    if db.has_permission(user_id, "statistics"):
+        r5.append(InlineKeyboardButton("📊 Analytics & Stats", callback_data="adm_stats"))
+    if db.has_permission(user_id, "orders"):
+        r5.append(InlineKeyboardButton("📦 All Orders", callback_data="adm_all_orders"))
+    if r5:
+        keyboard.append(r5)
+
+    # Row 6: Settings
+    r6 = []
+    if db.has_permission(user_id, "bot_settings"):
+        r6.append(InlineKeyboardButton("⚙️ Keyboard Settings", callback_data="adm_keyboard_settings"))
+        r6.append(InlineKeyboardButton("⚙️ Bot Settings", callback_data="adm_bot_settings"))
+    if r6:
+        keyboard.append(r6)
+
+    # Row 7: Maintenance
+    if db.has_permission(user_id, "bot_settings"):
+        keyboard.append([
+            InlineKeyboardButton(f"🛠️ Maint: {'ON 🟢' if db.get_setting('maintenance_mode') == True else 'OFF 🔴'}", callback_data="adm_toggle_maintenance")
+        ])
+
+    return InlineKeyboardMarkup(keyboard)
+
+
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -2780,39 +3176,13 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <blockquote>👇 <b>Select an option:</b></blockquote>"""
 
-    keyboard = [
-        [
-            InlineKeyboardButton("📚 Courses", callback_data="adm_courses"),
-            InlineKeyboardButton("📖 E-Books", callback_data="adm_ebooks"),
-            InlineKeyboardButton("📁 Categories", callback_data="adm_categories")
-        ],
-        [
-            InlineKeyboardButton("⏳ Pending Orders", callback_data="adm_pending_orders"),
-            InlineKeyboardButton("🎟️ Coupons & Promo", callback_data="adm_coupons")
-        ],
-        [
-            InlineKeyboardButton("💸 Withdrawals", callback_data="adm_withdrawals"),
-            InlineKeyboardButton("⚙️ Payment Gateway", callback_data="adm_payments")
-        ],
-        [
-            InlineKeyboardButton("👥 User Management", callback_data="adm_users"),
-            InlineKeyboardButton("📢 Broadcast Notice", callback_data="adm_broadcast")
-        ],
-        [
-            InlineKeyboardButton("📊 Analytics & Stats", callback_data="adm_stats"),
-            InlineKeyboardButton("📦 All Orders", callback_data="adm_all_orders")
-        ],
-        [
-            InlineKeyboardButton("⚙️ Keyboard Settings", callback_data="adm_keyboard_settings"),
-            InlineKeyboardButton("⚙️ Bot Settings", callback_data="adm_bot_settings")
-        ],
-        [
-            InlineKeyboardButton(f"🛠️ Maint: {'ON 🟢' if db.get_setting('maintenance_mode') == True else 'OFF 🔴'}", callback_data="adm_toggle_maintenance")
-        ]
-    ]
+    keyboard = get_admin_dashboard_keyboard(user_id)
+    if not keyboard.inline_keyboard:
+        await update.message.reply_text("⛔ You currently do not have permissions for any admin modules. Please contact the Super Admin.")
+        return
 
     await update.message.reply_text(
-        msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard)
+        msg, parse_mode="HTML", reply_markup=keyboard
     )
 
 
@@ -2822,20 +3192,62 @@ def get_admin_uview_keyboard(uid: int, is_user_adm: bool, is_root_owner: bool) -
         [InlineKeyboardButton("◈ Toggle Earnings Menu", callback_data=f"adm_utogearn_{uid}")],
         [InlineKeyboardButton("💰 Adjust Balance", callback_data=f"adm_ubal_{uid}")],
     ]
-    if not is_user_adm:
+    if is_user_adm:
+        keyboard.append([InlineKeyboardButton("🔐 Admin Permissions (পারমিশন পরিবর্তন)", callback_data=f"adm_perm_{uid}")])
+        if not is_root_owner:
+            keyboard.append([InlineKeyboardButton("❌ Demote from Admin", callback_data=f"adm_rmadmin_{uid}")])
+    else:
         keyboard.append([InlineKeyboardButton("👑 Promote to Admin", callback_data=f"adm_makeadmin_{uid}")])
-    elif not is_root_owner:
-        keyboard.append([InlineKeyboardButton("❌ Demote from Admin", callback_data=f"adm_rmadmin_{uid}")])
+
     keyboard.append([InlineKeyboardButton("➥ Send Message (DM)", callback_data=f"adm_udm_{uid}")])
     keyboard.append([InlineKeyboardButton("« Admin List", callback_data="adm_admin_list"), InlineKeyboardButton("« User List", callback_data="adm_userlist_1")])
     return InlineKeyboardMarkup(keyboard)
+
+
+async def render_admin_permission_dashboard(query, context: ContextTypes.DEFAULT_TYPE, target_uid: int):
+    u = db.get_user(target_uid)
+    target_name = u.get("full_name") or u.get("username") or str(target_uid)
+    perms = db.get_admin_permissions(target_uid)
+    is_target_root = db.is_super_admin(target_uid)
+
+    role_str = "👑 Super Admin (Full Access)" if is_target_root else "🛡️ Sub-Admin"
+
+    msg = f"""<blockquote>🔐 <b>Permission Toggle:</b>
+👤 <b>Admin:</b> {html.escape(target_name)} (<code>{target_uid}</code>)
+👑 <b>Role:</b> {role_str}</blockquote>
+
+<blockquote>💡 বাটনগুলোতে চাপ দিয়ে পারমিশন চালু (✅) বা বন্ধ (❌) করুন:</blockquote>"""
+
+    keyboard = []
+    for p_key, p_info in ADMIN_PERMISSION_DEFINITIONS.items():
+        is_enabled = perms.get(p_key, True)
+        icon = "✅" if is_enabled else "❌"
+        btn_text = f"{icon} {p_info['emoji']} {p_info['name']}"
+        keyboard.append([
+            InlineKeyboardButton(btn_text, callback_data=f"adm_togperm_{target_uid}_{p_key}")
+        ])
+
+    bottom_row = []
+    if not is_target_root:
+        bottom_row.append(InlineKeyboardButton("🗑 Admin Remove", callback_data=f"adm_rmadmin_{target_uid}"))
+    bottom_row.append(InlineKeyboardButton("◀️ Back", callback_data="adm_admin_list"))
+    keyboard.append(bottom_row)
+
+    if query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYPE, folder_path: str = ""):
     clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ")
     context.user_data["active_dir"] = clean_path
 
-    subfolders = db.get_sub_folders(clean_path)
+    subfolders = db.get_sub_folders(clean_path, include_inactive=True)
     courses = db.get_courses_by_folder(clean_path, include_inactive=True) if clean_path else []
 
     segments = [s.strip() for s in clean_path.split(" > ") if s.strip()]
@@ -2849,10 +3261,12 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
     for sf in subfolders:
         child_path = f"{clean_path} > {sf}" if clean_path else sf
         child_courses = db.get_courses_by_folder(child_path, include_inactive=True)
-        child_sub_count = len(db.get_sub_folders(child_path))
+        child_sub_count = len(db.get_sub_folders(child_path, include_inactive=True))
         total_items = len(child_courses) if len(child_courses) > 0 else child_sub_count
         badge = f" ({total_items})" if total_items > 0 else ""
-        row.append(InlineKeyboardButton(f"{sf}{badge}", callback_data=f"adm_dir_{child_path}"))
+        is_sf_active = db.is_category_active(child_path)
+        status_dot = "" if is_sf_active else "🔴 [OFF] "
+        row.append(InlineKeyboardButton(f"{status_dot}{sf}{badge}", callback_data=f"adm_dir_{child_path}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
@@ -2880,13 +3294,13 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
             ])
         keyboard.append([InlineKeyboardButton("« Admin Menu", callback_data="adm_main")])
 
-        sub_list_str = "\n".join([f"  📁 <b>{html.escape(s)}</b> <i>({len(db.get_courses_by_folder(s, include_inactive=True)) or len(db.get_sub_folders(s))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো ক্যাটাগরি নেই)</i>"
+        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_category_active(s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_courses_by_folder(s, include_inactive=True)) or len(db.get_sub_folders(s, include_inactive=True))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো ক্যাটাগরি নেই)</i>"
         msg = f"""<blockquote>📂 <b>[ Category & Directory Manager ]</b></blockquote>
 
 <blockquote>📂 <b>Categories ({len(subfolders)}):</b>
 {sub_list_str}</blockquote>
 
-<blockquote>💡 <b>প্রতিটি ক্যাটাগরিতে ঢুকে সাব-ফোল্ডার বা সরাসরি কোর্স যুক্ত করতে পারেন।</b></blockquote>"""
+<blockquote>💡 <b>প্রতিটি ক্যাটাগরিতে ঢুকে সাব-ফোল্ডার, অন/অফ (Status Toggle) বা সরাসরি কোর্স যুক্ত করতে পারেন।</b></blockquote>"""
     else:
         keyboard.append([
             InlineKeyboardButton("➕ Add Course", callback_data="adm_fld_addcourse"),
@@ -2901,8 +3315,12 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
         ]
         keyboard.append(move_row)
 
+        is_active = db.is_category_active(clean_path)
+        status_toggle_btn = InlineKeyboardButton(f"🔄 Status: {'🟢 Active (ON)' if is_active else '🔴 Inactive (OFF)'}", callback_data=f"adm_fld_togglestatus_{current_name}")
         del_btn = InlineKeyboardButton(f"✕ Delete '{current_name}'", callback_data="adm_fld_delfolder")
         rename_btn = InlineKeyboardButton("✏️ Rename", callback_data=f"adm_fld_rename_{current_name}")
+        
+        keyboard.append([status_toggle_btn])
         keyboard.append([rename_btn, del_btn])
 
         back_title = f"« Back to {segments[-2]}" if len(segments) > 1 else "« All Categories"
@@ -2913,10 +3331,12 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
             keyboard.append([InlineKeyboardButton("📂 All Categories (Root)", callback_data="adm_dir_")])
 
         path_display = html.escape(" ➔ ".join(segments))
-        sub_list_str = "\n".join([f"  📁 <b>{html.escape(s)}</b> <i>({len(db.get_courses_by_folder(clean_path + ' > ' + s, include_inactive=True)) or len(db.get_sub_folders(clean_path + ' > ' + s))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো সাব-ফোল্ডার নেই)</i>"
+        status_display = "🟢 <b>Active (ON)</b>" if is_active else "🔴 <b>Inactive (OFF - Hidden from students)</b>"
+        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_category_active(clean_path + ' > ' + s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_courses_by_folder(clean_path + ' > ' + s, include_inactive=True)) or len(db.get_sub_folders(clean_path + ' > ' + s, include_inactive=True))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো সাব-ফোল্ডার নেই)</i>"
         course_list_str = "\n".join([f"  • {'[DISABLED] ' if c.get('status') == 'inactive' else ''}<b>{html.escape(c['name'])}</b> ➔ <code>৳{c.get('price', 0)}</code>" for c in courses]) if courses else "  <i>(এই ফোল্ডারে এখনো কোনো কোর্স নেই)</i>"
 
-        msg = f"""<blockquote>📁 <b>[ Directory: <code>{path_display}</code> ]</b></blockquote>
+        msg = f"""<blockquote>📁 <b>[ Directory: <code>{path_display}</code> ]</b>
+📌 <b>Visibility / Status:</b> {status_display}</blockquote>
 
 <blockquote>📂 <b>Sub-Folders ({len(subfolders)}):</b>
 {sub_list_str}</blockquote>
@@ -2924,7 +3344,119 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
 <blockquote>📚 <b>Courses ({len(courses)}):</b>
 {course_list_str}</blockquote>
 
-<blockquote>💡 <b>নিচের বাটন চেপে এই ডিরেক্টরিতে নতুন কোর্স বা সাব-ফোল্ডার যোগ করুন:</b></blockquote>"""
+<blockquote>💡 <b>নিচের বাটন চেপে ক্যাটাগরি অন/অফ, নতুন কোর্স বা সাব-ফোল্ডার পরিচালনা করুন:</b></blockquote>"""
+
+    if query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def render_admin_ebook_folder_directory(query, context: ContextTypes.DEFAULT_TYPE, folder_path: str = ""):
+    clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ")
+    context.user_data["active_eb_dir"] = clean_path
+
+    subfolders = db.get_ebook_sub_folders(clean_path, include_inactive=True)
+    ebooks = db.get_ebooks_by_folder(clean_path, include_inactive=True) if clean_path else []
+
+    segments = [s.strip() for s in clean_path.split(" > ") if s.strip()]
+    current_name = segments[-1] if segments else "Root"
+    parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
+
+    keyboard = []
+
+    # 1. Sub-folder buttons (2 per row)
+    row = []
+    for sf in subfolders:
+        child_path = f"{clean_path} > {sf}" if clean_path else sf
+        child_ebooks = db.get_ebooks_by_folder(child_path, include_inactive=True)
+        child_sub_count = len(db.get_ebook_sub_folders(child_path, include_inactive=True))
+        total_items = len(child_ebooks) if len(child_ebooks) > 0 else child_sub_count
+        badge = f" ({total_items})" if total_items > 0 else ""
+        is_sf_active = db.is_ebook_category_active(child_path)
+        status_dot = "" if is_sf_active else "🔴 [OFF] "
+        row.append(InlineKeyboardButton(f"{status_dot}{sf}{badge}", callback_data=f"adm_ebdir_{child_path}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    # 2. E-Books in this folder (if any)
+    for eb in ebooks[:25]:
+        price_tag = f" ({eb['price']}৳)" if eb.get('price', 0) > 0 else " (Free 🎁)"
+        status_dot = "🔴 " if eb.get("status") == "inactive" else ""
+        keyboard.append([
+            InlineKeyboardButton(f"{status_dot}{eb['name']} — {eb['price']}৳" if eb.get('price', 0) > 0 else f"{status_dot}{eb['name']} — Free 🎁", callback_data=f"adm_vieweb_{eb['id']}")
+        ])
+
+    # 3. Contextual Actions (Add E-Book & Add Sub-Folder)
+    if not clean_path:
+        keyboard.append([
+            InlineKeyboardButton("➕ Add Category", callback_data="adm_ebfld_addfolder"),
+            InlineKeyboardButton("➕ Add New E-Book", callback_data="adm_ebfld_addebook")
+        ])
+        if len(subfolders) > 1:
+            keyboard.append([
+                InlineKeyboardButton("⬆️ Move Up", callback_data="adm_ebfld_moveup"),
+                InlineKeyboardButton("⬇️ Move Down", callback_data="adm_ebfld_movedown")
+            ])
+        keyboard.append([InlineKeyboardButton("« Admin Menu", callback_data="adm_main")])
+
+        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_ebook_category_active(s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_ebooks_by_folder(s, include_inactive=True)) or len(db.get_ebook_sub_folders(s, include_inactive=True))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো ক্যাটাগরি নেই)</i>"
+        msg = f"""<blockquote>📖 <b>[ E-Book Category & Directory Manager ]</b></blockquote>
+
+<blockquote>📂 <b>Categories ({len(subfolders)}):</b>
+{sub_list_str}</blockquote>
+
+<blockquote>💡 <b>প্রতিটি ক্যাটাগরিতে ঢুকে সাব-ফোল্ডার, অন/অফ (Status Toggle) বা সরাসরি ই-বুক / PDF যুক্ত করতে পারেন।</b></blockquote>"""
+    else:
+        keyboard.append([
+            InlineKeyboardButton("➕ Add E-Book", callback_data="adm_ebfld_addebook"),
+            InlineKeyboardButton("➕ Add Sub-Folder", callback_data="adm_ebfld_addfolder")
+        ])
+
+        move_row = [
+            InlineKeyboardButton("⬅️", callback_data=f"adm_ebfld_mleft_{current_name}"),
+            InlineKeyboardButton("⬆️", callback_data=f"adm_ebfld_moveup_{current_name}"),
+            InlineKeyboardButton("⬇️", callback_data=f"adm_ebfld_movedown_{current_name}"),
+            InlineKeyboardButton("➡️", callback_data=f"adm_ebfld_mright_{current_name}")
+        ]
+        keyboard.append(move_row)
+
+        is_active = db.is_ebook_category_active(clean_path)
+        status_toggle_btn = InlineKeyboardButton(f"🔄 Status: {'🟢 Active (ON)' if is_active else '🔴 Inactive (OFF)'}", callback_data=f"adm_ebfld_togglestatus_{current_name}")
+        del_btn = InlineKeyboardButton(f"✕ Delete '{current_name}'", callback_data="adm_ebfld_delfolder")
+        rename_btn = InlineKeyboardButton("✏️ Rename", callback_data=f"adm_ebfld_rename_{current_name}")
+        
+        keyboard.append([status_toggle_btn])
+        keyboard.append([rename_btn, del_btn])
+
+        back_title = f"« Back to {segments[-2]}" if len(segments) > 1 else "« All Categories"
+        back_btn = InlineKeyboardButton(back_title, callback_data=f"adm_ebdir_{parent_path}")
+        keyboard.append([back_btn])
+
+        if len(segments) > 1:
+            keyboard.append([InlineKeyboardButton("📂 All Categories (Root)", callback_data="adm_ebdir_")])
+
+        path_display = html.escape(" ➔ ".join(segments))
+        status_display = "🟢 <b>Active (ON)</b>" if is_active else "🔴 <b>Inactive (OFF - Hidden from students)</b>"
+        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_ebook_category_active(clean_path + ' > ' + s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_ebooks_by_folder(clean_path + ' > ' + s, include_inactive=True)) or len(db.get_ebook_sub_folders(clean_path + ' > ' + s))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো সাব-ফোল্ডার নেই)</i>"
+        ebook_list_str = "\n".join([f"  • {'[DISABLED] ' if eb.get('status') == 'inactive' else ''}<b>{html.escape(eb['name'])}</b> ➔ <code>৳{eb.get('price', 0)}</code>" for eb in ebooks]) if ebooks else "  <i>(এই ফোল্ডারে এখনো কোনো ই-বুক নেই)</i>"
+
+        msg = f"""<blockquote>📁 <b>[ E-Book Directory: <code>{path_display}</code> ]</b>
+📌 <b>Visibility / Status:</b> {status_display}</blockquote>
+
+<blockquote>📂 <b>Sub-Folders ({len(subfolders)}):</b>
+{sub_list_str}</blockquote>
+
+<blockquote>📖 <b>E-Books ({len(ebooks)}):</b>
+{ebook_list_str}</blockquote>
+<blockquote>💡 <b>নিচের বাটন চেপে ক্যাটাগরি অন/অফ, নতুন ই-বুক বা সাব-ফোল্ডার পরিচালনা করুন:</b></blockquote>"""
 
     if query.message.photo:
         try:
@@ -3156,6 +3688,103 @@ Choose what you want to edit:"""
     await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+def check_admin_callback_permission(user_id: int, data: str) -> tuple[bool, str]:
+    if db.is_super_admin(user_id):
+        return True, ""
+
+    # Course management
+    if (data.startswith("adm_course") or data.startswith("adm_dir_") or 
+        data.startswith("adm_fld_addcourse") or data.startswith("adm_list_courses") or 
+        data.startswith("adm_edit_") or data.startswith("adm_pub_course") or 
+        data.startswith("adm_cancel_course") or data.startswith("adm_skip_")):
+        if not db.has_permission(user_id, "course_manage"):
+            return False, "Course Management"
+
+    # E-Book management
+    if (data.startswith("adm_ebook") or data.startswith("adm_ebdir_") or 
+        data.startswith("adm_ebfld_addebook") or data.startswith("adm_list_ebooks") or 
+        data.startswith("adm_editeb_") or data.startswith("adm_publisheb") or 
+        data.startswith("adm_deleb_") or data.startswith("adm_vieweb_") or 
+        data.startswith("adm_eb_toggle_") or data.startswith("adm_ebmove_") or 
+        data.startswith("adm_addebook_dir_") or data.startswith("adm_skipeb_") or 
+        data.startswith("adm_cancel_ebook")):
+        if not db.has_permission(user_id, "ebook_manage"):
+            return False, "E-Book Management"
+
+    # Category management
+    if (data.startswith("adm_categories") or data.startswith("adm_catm_") or 
+        data.startswith("adm_subcatm_") or data.startswith("adm_fld_") or 
+        data.startswith("adm_ebfld_")):
+        if not db.has_permission(user_id, "category_manage"):
+            return False, "Category Management"
+
+    # Orders
+    if (data.startswith("adm_pending_orders") or data.startswith("adm_all_orders") or 
+        data.startswith("adm_porders_") or data.startswith("adm_aorders_") or 
+        data.startswith("ordinfo_") or data.startswith("approve_") or 
+        data.startswith("reject_") or data.startswith("adm_order_search")):
+        if not db.has_permission(user_id, "orders"):
+            return False, "Order Management"
+
+    # Coupons
+    if (data.startswith("adm_coupon") or data.startswith("adm_add_coupon") or 
+        data.startswith("adm_del_coupon_") or data.startswith("adm_tog_coupon_") or 
+        data.startswith("cpnwiz_")):
+        if not db.has_permission(user_id, "coupon"):
+            return False, "Coupon Management"
+
+    # Payments & Withdrawals
+    if (data.startswith("adm_payments") or data.startswith("adm_withdrawals") or 
+        data.startswith("adm_paym_") or data.startswith("adm_pedit_") or 
+        data.startswith("adm_add_paym") or data.startswith("adm_edit_paynote") or 
+        data.startswith("adm_del_paynote") or data.startswith("wdrinfo_") or 
+        data.startswith("apprwdr_") or data.startswith("rejwdr_")):
+        if not db.has_permission(user_id, "payment_settings"):
+            return False, "Payment Settings & Withdrawals"
+
+    # Broadcast
+    if (data.startswith("adm_broadcast") or data.startswith("adm_bc_") or 
+        data.startswith("bc_sel_")):
+        if not db.has_permission(user_id, "broadcast"):
+            return False, "Broadcast Notice"
+
+    # Admin Management
+    if (data.startswith("adm_admin_list") or data.startswith("adm_add_admin") or 
+        data.startswith("adm_rm_admin_menu") or data.startswith("adm_rmadmin_") or 
+        data.startswith("adm_makeadmin_")):
+        if not db.has_permission(user_id, "admin_manage"):
+            return False, "Admin Management"
+
+    # Admin Permission
+    if data.startswith("adm_perm_") or data.startswith("adm_togperm_"):
+        if not db.has_permission(user_id, "admin_permission"):
+            return False, "Admin Permissions"
+
+    # Statistics
+    if data.startswith("adm_stats"):
+        if not db.has_permission(user_id, "statistics"):
+            return False, "Statistics"
+
+    # Bot Settings & Keyboards
+    if (data.startswith("adm_bot_settings") or data.startswith("adm_keyboard_settings") or 
+        data.startswith("adm_home_buttons") or data.startswith("adm_toggle_maintenance") or 
+        data.startswith("adm_editmsg_") or data.startswith("adm_resetmsg_") or 
+        data.startswith("adm_kb_") or data.startswith("adm_hbtn_")):
+        if not db.has_permission(user_id, "bot_settings"):
+            return False, "Bot Settings"
+
+    # User Management
+    if (data.startswith("adm_users") or data.startswith("adm_userlist_") or 
+        data.startswith("adm_user_search") or data.startswith("adm_uview_") or 
+        data.startswith("adm_ubal_") or data.startswith("adm_utogearn_") or 
+        data.startswith("adm_ucourse_") or data.startswith("adm_ugrant_") or 
+        data.startswith("adm_urevoke_") or data.startswith("adm_udm_")):
+        if not (db.has_permission(user_id, "user_manage") or db.has_permission(user_id, "admin_manage") or db.has_permission(user_id, "admin_permission")):
+            return False, "User Management"
+
+    return True, ""
+
+
 async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -3163,6 +3792,11 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if not is_admin(user_id):
         await query.answer("⛔ Access Denied!", show_alert=True)
+        return
+
+    allowed, module_name = check_admin_callback_permission(user_id, data)
+    if not allowed:
+        await query.answer(f"⛔ Access Denied! You do not have permission for {module_name}.", show_alert=True)
         return
 
     if data.startswith("bc_sel_"):
@@ -3767,44 +4401,19 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 <blockquote>👇 <b>Select an option:</b></blockquote>"""
 
-        keyboard = [
-            [
-                InlineKeyboardButton("📚 Courses", callback_data="adm_courses"),
-                InlineKeyboardButton("📖 E-Books", callback_data="adm_ebooks"),
-                InlineKeyboardButton("📁 Categories", callback_data="adm_categories")
-            ],
-            [
-                InlineKeyboardButton("⏳ Pending Orders", callback_data="adm_pending_orders"),
-                InlineKeyboardButton("🎟️ Coupons & Promo", callback_data="adm_coupons")
-            ],
-            [
-                InlineKeyboardButton("💸 Withdrawals", callback_data="adm_withdrawals"),
-                InlineKeyboardButton("⚙️ Payment Gateway", callback_data="adm_payments")
-            ],
-            [
-                InlineKeyboardButton("👥 User Management", callback_data="adm_users"),
-                InlineKeyboardButton("📢 Broadcast Notice", callback_data="adm_broadcast")
-            ],
-            [
-                InlineKeyboardButton("📊 Analytics & Stats", callback_data="adm_stats"),
-                InlineKeyboardButton("📦 All Orders", callback_data="adm_all_orders")
-            ],
-            [
-                InlineKeyboardButton("⚙️ Keyboard Settings", callback_data="adm_keyboard_settings"),
-                InlineKeyboardButton("⚙️ Bot Settings", callback_data="adm_bot_settings")
-            ],
-            [
-                InlineKeyboardButton(f"🛠️ Maint: {'ON 🟢' if db.get_setting('maintenance_mode') == True else 'OFF 🔴'}", callback_data="adm_toggle_maintenance")
-            ]
-        ]
+        keyboard = get_admin_dashboard_keyboard(user_id)
+        if not keyboard.inline_keyboard:
+            await query.answer("⛔ You currently do not have permissions for any admin modules.", show_alert=True)
+            return
+
         if query.message.photo:
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(msg, parse_mode="HTML", reply_markup=keyboard)
         else:
-            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=keyboard)
 
     elif data == "adm_toggle_maintenance":
         current = db.get_setting("maintenance_mode", False)
@@ -4246,13 +4855,15 @@ _{db.get_payment_note()}_
 <blockquote>📋 <b>বর্তমান এডমিন তালিকা ({len(admins)} জন):</b>
 {list_text}</blockquote>
 
-<blockquote>💡 নতুন এডমিন যুক্ত করতে নিচের <b>➕ Add New Admin</b> বাটনে চাপুন।</blockquote>"""
+<blockquote>💡 এডমিনের নামের উপর চাপ দিয়ে <b>পারমিশন পরিবর্তন (Permission Toggle)</b> অথবা <b>রিমুভ</b> করুন।</blockquote>"""
 
         keyboard = []
         for aid in admins:
             u = db.get_user(aid)
             u_name = u.get("full_name") or u.get("username") or str(aid)
-            keyboard.append([InlineKeyboardButton(f"👤 {u_name[:20]} (ID: {aid})", callback_data=f"adm_uview_{aid}")])
+            is_root = (len(ADMIN_IDS) > 0 and aid == ADMIN_IDS[0])
+            badge = "👑 Super Admin" if is_root else "🔐 Permissions"
+            keyboard.append([InlineKeyboardButton(f"👤 {u_name[:18]} ({badge})", callback_data=f"adm_perm_{aid}")])
 
         keyboard.append([
             InlineKeyboardButton("➕ Add New Admin", callback_data="adm_add_admin"),
@@ -4260,6 +4871,112 @@ _{db.get_payment_note()}_
         ])
         keyboard.append([InlineKeyboardButton("« User Management", callback_data="adm_users")])
 
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("adm_perm_"):
+        target_uid = int(data.replace("adm_perm_", ""))
+        await render_admin_permission_dashboard(query, context, target_uid)
+        return
+
+    elif data.startswith("adm_togperm_"):
+        parts = data.replace("adm_togperm_", "").split("_", 1)
+        target_uid = int(parts[0])
+        p_key = parts[1]
+
+        if not db.has_permission(user_id, "admin_permission"):
+            await query.answer("⛔ Access Denied! You do not have permission to manage permissions.", show_alert=True)
+            return
+
+        if db.is_super_admin(target_uid):
+            await query.answer("👑 Super Admin permissions cannot be modified!", show_alert=True)
+            return
+
+        new_val = db.toggle_admin_permission(target_uid, p_key)
+        p_name = ADMIN_PERMISSION_DEFINITIONS.get(p_key, {}).get("name", p_key)
+        status_txt = "Granted ✅" if new_val else "Revoked ❌"
+        await query.answer(f"{p_name}: {status_txt}")
+        await render_admin_permission_dashboard(query, context, target_uid)
+        return
+
+    elif data.startswith("adm_rmadmin_"):
+        target_uid = int(data.replace("adm_rmadmin_", ""))
+        if not db.has_permission(user_id, "admin_manage"):
+            await query.answer("⛔ Access Denied! You do not have permission to remove admins.", show_alert=True)
+            return
+
+        if db.is_super_admin(target_uid):
+            await query.answer("👑 Super Admin cannot be removed!", show_alert=True)
+            return
+
+        removed = db.remove_admin(target_uid)
+        if removed:
+            try:
+                await context.bot.send_message(
+                    target_uid,
+                    "⚠️ **আপনার এডমিন রোল অপসারণ করা হয়েছে।**",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+            await query.answer(f"✅ Admin {target_uid} removed successfully!", show_alert=True)
+        else:
+            await query.answer("ℹ️ User is not an admin!", show_alert=True)
+
+        # Refresh admin list
+        admins = db.get_admins()
+        admin_lines = []
+        for aid in admins:
+            u = db.get_user(aid)
+            u_name = html.escape(u.get("full_name", "N/A")) if u else f"ID: {aid}"
+            u_user = f" (@{html.escape(u.get('username'))})" if (u and u.get('username')) else ""
+            is_root = " 👑 <i>[Super Admin / Owner]</i>" if (len(ADMIN_IDS) > 0 and aid == ADMIN_IDS[0]) else " 🛡️ <i>[Admin]</i>"
+            admin_lines.append(f"• <b>{u_name}</b>{u_user} — <code>{aid}</code>{is_root}")
+
+        list_text = "\n".join(admin_lines) if admin_lines else "<i>কোনো এডমিন পাওয়া যায়নি</i>"
+
+        msg = f"""<blockquote>👑 <b>Admin Team & Role Management</b></blockquote>
+
+<blockquote>📋 <b>বর্তমান এডমিন তালিকা ({len(admins)} জন):</b>
+{list_text}</blockquote>
+
+<blockquote>💡 এডমিনের নামের উপর চাপ দিয়ে <b>পারমিশন পরিবর্তন (Permission Toggle)</b> অথবা <b>রিমুভ</b> করুন।</blockquote>"""
+
+        keyboard = []
+        for aid in admins:
+            u = db.get_user(aid)
+            u_name = u.get("full_name") or u.get("username") or str(aid)
+            is_root = (len(ADMIN_IDS) > 0 and aid == ADMIN_IDS[0])
+            badge = "👑 Super Admin" if is_root else "🔐 Permissions"
+            keyboard.append([InlineKeyboardButton(f"👤 {u_name[:18]} ({badge})", callback_data=f"adm_perm_{aid}")])
+
+        keyboard.append([
+            InlineKeyboardButton("➕ Add New Admin", callback_data="adm_add_admin"),
+            InlineKeyboardButton("✕ Remove Admin", callback_data="adm_rm_admin_menu")
+        ])
+        keyboard.append([InlineKeyboardButton("« User Management", callback_data="adm_users")])
+
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    elif data == "adm_rm_admin_menu":
+        admins = db.get_admins()
+        removable_admins = [aid for aid in admins if not (len(ADMIN_IDS) > 0 and aid == ADMIN_IDS[0])]
+
+        if not removable_admins:
+            await query.answer("No secondary admins to remove!", show_alert=True)
+            return
+
+        keyboard = []
+        for aid in removable_admins:
+            u = db.get_user(aid)
+            u_name = u.get("full_name") or u.get("username") or str(aid)
+            keyboard.append([InlineKeyboardButton(f"✕ Remove: {u_name[:18]} ({aid})", callback_data=f"adm_rmadmin_{aid}")])
+
+        keyboard.append([InlineKeyboardButton("« Back to Admin List", callback_data="adm_admin_list")])
+
+        msg = """<blockquote>✕ <b>[ Remove Admin Role ]</b></blockquote>
+
+<blockquote>⚠️ Select the admin you want to remove below:</blockquote>"""
         await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "adm_bc_create":
@@ -4466,25 +5183,27 @@ Forward any message from a channel or chat to broadcast it.
     elif data == "adm_user_search":
         context.user_data["admin_user_step"] = "search"
         await query.edit_message_text(
-            """🔍 **Search User:**
-━━━━━━━━━━━━━━━━━━━━
+            """<blockquote>🔍 <b>Search User / শিক্ষার্থী খুঁজুন</b></blockquote>
 
-Send the user's **User ID**, **Username (without @)** or **Name** to search.
+<blockquote>📝 যাকে খুঁজতে চান তার <b>Telegram User ID</b>, <b>Username</b> অথবা <b>Name</b> লিখে পাঠান।
+(যেমন: <code>7610279126</code> বা <code>student</code>)</blockquote>
 
-💡 Type /cancel to abort."""
+<blockquote>💡 বাতিল করতে নিচের <b>« Cancel</b> বাটনে চাপুন অথবা <code>/cancel</code> লিখুন।</blockquote>""",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data="adm_users")]])
         )
 
     elif data == "adm_order_search":
         context.user_data["admin_order_search_step"] = True
         await query.edit_message_text(
-            """🔍 **Search Orders:**
-━━━━━━━━━━━━━━━━━━━━
+            """<blockquote>🔍 <b>Search Orders / অর্ডার খুঁজুন</b></blockquote>
 
-Send the **Order ID**, **TrxID**, **User ID** or **Student Name** to search.
+<blockquote>📝 <b>Order ID</b>, <b>TrxID</b>, <b>User ID</b> অথবা <b>Student Name</b> লিখে পাঠান।
+(যেমন: <code>1001</code> বা <code>TX12345</code>)</blockquote>
 
-💡 Type /cancel to abort.""",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Pending Orders", callback_data="adm_pending_orders")]])
+<blockquote>💡 বাতিল করতে নিচের <b>« Cancel</b> বাটনে চাপুন অথবা <code>/cancel</code> লিখুন।</blockquote>""",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data="adm_pending_orders")]])
         )
 
     elif data.startswith("adm_uview_"):
@@ -4832,14 +5551,14 @@ Choose how you want to broadcast:
             "program": sub.lower()
         }
 
-        path_disp = active_dir if active_dir else "Root"
-        msg = f"""📁 **[ ডিরেক্টরি: `{path_disp}` ]**
+        path_disp = active_dir if active_dir else "General"
+        msg = f"""📁 **ডিরেক্টরি: `{path_disp}`**
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
 (যেমন: 📘 BH Biology Full Course | {cat})
 
-💡 *ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।*"""
+💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।"""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{active_dir}")]]
         if query.message.photo:
             try:
@@ -4871,13 +5590,13 @@ Choose how you want to broadcast:
             "program": sub.lower()
         }
 
-        msg = f"""📁 **[ ডিরেক্টরি: `{target_path}` ]**
+        msg = f"""📁 **ডিরেক্টরি: `{target_path}`**
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
 (যেমন: 📘 BH Biology Full Course | {cat})
 
-💡 *ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{target_path}` ডিরেক্টরিতে সেট থাকবে।*"""
+💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{target_path}` ডিরেক্টরিতে সেট করা থাকবে।"""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{target_path}")]]
         if query.message.photo:
             try:
@@ -4890,33 +5609,24 @@ Choose how you want to broadcast:
 
     elif data.startswith("adm_addcourse_cat_"):
         cat = data.replace("adm_addcourse_cat_", "")
-        subcats = db.get_sub_folders(cat)
         context.user_data["active_dir"] = cat
         context.user_data["admin_add_course"] = True
-        context.user_data["new_course"] = {"category": cat, "folder_path": cat}
+        context.user_data["course_step"] = "name"
+        context.user_data["new_course"] = {
+            "category": cat,
+            "subcategory": "General",
+            "folder_path": cat,
+            "program": "general"
+        }
 
-        if not subcats:
-            context.user_data["new_course"]["subcategory"] = "General"
-            context.user_data["new_course"]["program"] = "general"
-            context.user_data["course_step"] = "name"
-            msg = f"""📁 **[ ক্যাটাগরি: `{cat}` ]**
+        msg = f"""📁 **ডিরেক্টরি: `{cat}`**
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
 (যেমন: 📘 BH Biology Full Course | {cat})
 
-💡 *ক্যাটাগরি স্বয়ংক্রিয়ভাবে `{cat}` সেট করা থাকবে।*"""
-            k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{cat}")]]
-        else:
-            context.user_data["course_step"] = "name"
-            msg = f"""📁 **[ ক্যাটাগরি: `{cat}` ]**
-━━━━━━━━━━━━━━━━━━━━
-
-✨ **ধাপ ১/৫: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: 📘 BH Biology Full Course | {cat})
-
-💡 *কোর্সের নাম ও বিবরণ দেওয়ার পর `{cat}` এর সাব-ফোল্ডার সিলেক্ট করতে পারবেন।*"""
-            k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{cat}")]]
+💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{cat}` ডিরেক্টরিতে সেট করা থাকবে।"""
+        k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{cat}")]]
 
         if query.message.photo:
             try:
@@ -4926,6 +5636,17 @@ Choose how you want to broadcast:
             await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
         else:
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
+
+    elif data.startswith("adm_fld_togglestatus_"):
+        active_dir = context.user_data.get("active_dir", "")
+        if not active_dir:
+            await query.answer("Cannot toggle root directory status!", show_alert=True)
+            return
+        new_st = db.toggle_category_status(active_dir)
+        st_word = "🟢 Active (ON)" if new_st else "🔴 Inactive (OFF - Hidden)"
+        await query.answer(f"Category status changed to {st_word}!", show_alert=True)
+        await render_admin_folder_directory(query, context, active_dir)
+        return
 
     elif data == "adm_fld_delfolder":
         active_dir = context.user_data.get("active_dir", "")
@@ -5057,8 +5778,9 @@ Choose how you want to broadcast:
         context.user_data["rename_folder_parent"] = parent_path
         context.user_data["awaiting_folder_rename"] = True
         await query.edit_message_text(
-            f"✏️ **Rename '{folder_name}' to:**\n\n(Type new name or /cancel to abort)",
-            parse_mode="Markdown"
+            f"✏️ **Rename '{folder_name}' to:**\n\n(Type new name or click Cancel below)",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data=f"adm_dir_{active_dir}")]])
         )
 
     elif data.startswith("adm_delcat_"):
@@ -5107,57 +5829,81 @@ Choose how you want to broadcast:
             await query.edit_message_text("❖ **Course Management Menu:**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "adm_add_course":
-        context.user_data["admin_add_course"] = True
-        context.user_data["course_step"] = "init_choice"
-        context.user_data["course_origin_callback"] = "adm_main"
-        context.user_data["new_course"] = {}
+        active_dir = context.user_data.get("active_dir", "")
+        if active_dir:
+            segments = [s.strip() for s in active_dir.split(">") if s.strip()]
+            cat = segments[0] if segments else "General"
+            sub = segments[-1] if len(segments) > 1 else "General"
 
-        msg = """✨ **নতুন কোর্স যুক্ত করুন (Add New Course)**
+            context.user_data["admin_add_course"] = True
+            context.user_data["course_step"] = "name"
+            context.user_data["course_origin_callback"] = f"adm_dir_{active_dir}"
+            context.user_data["new_course"] = {
+                "category": cat,
+                "subcategory": sub,
+                "folder_path": active_dir,
+                "program": sub.lower()
+            }
+
+            path_disp = active_dir
+            msg = f"""📁 **ডিরেক্টরি: `{path_disp}`**
 ━━━━━━━━━━━━━━━━━━━━
 
-💡 **আপনি ২ ভাবে কোর্স যুক্ত করতে পারেন:**
+✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
+(যেমন: 📘 BH Biology Full Course | {cat})
 
-1️⃣ ⚡ **Fast Template (এক মেসেজে):**
-নিচের ফরম্যাট কপি করে ক্যাপশনে (ছবিসহ) অথবা সাধারণ মেসেজ হিসেবে পাঠান:
-
-`Course Name: BH Biology Full Course | HSC 28`
-`Price: 400`
-`Category: HSC 28`
-`Sub-Category: Academic`
-`Link: https://t.me/+private_link`
-`Description:`
-`📋 Biology Full Course | HSC 2028`
-`🧰 এই কোর্সে জীববিজ্ঞান ১ম এবং ২য় পত্র সম্পূর্ণ পড়ানো হবে...`
-
-━━━━━━━━━━━━━━━━━━━━
-2️⃣ 🪄 **ধাপ অনুযায়ী সহজে যোগ করুন (Step-by-Step):**
-প্রথমে শুধু **কোর্সের নাম (Course Name)** লিখে পাঠান।
-
-⚠️ *পাবলিশ করার পূর্বে ছবিসহ সম্পূর্ণ প্রিভিউ দেখে নিশ্চিত করতে পারবেন।*"""
-
-        keyboard = [[InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_course")]]
-        if query.message.photo:
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        else:
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("adm_setcat_"):
-        cat_selected = data.replace("adm_setcat_", "")
-        if cat_selected == "CUSTOM":
-            context.user_data["course_step"] = "type_custom_cat"
-            msg_p = "✍️ **নতুন ক্যাটাগরির নাম লিখুন (যেমন: HSC 28 বা SSC):**\n\n(বাতিল করতে /cancel লিখুন)"
+💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।"""
+            k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{active_dir}")]]
             if query.message.photo:
                 try:
                     await query.message.delete()
                 except Exception:
                     pass
-                await query.message.reply_text(msg_p, parse_mode="Markdown")
+                await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
             else:
-                await query.edit_message_text(msg_p, parse_mode="Markdown")
+                await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
+        else:
+            categories = db.get_categories()
+            if not categories:
+                await query.answer("⚠️ প্রথমে একটি ক্যাটাগরি তৈরি করুন!", show_alert=True)
+                return
+            keyboard = []
+            row = []
+            for cat in categories:
+                row.append(InlineKeyboardButton(f"📁 {cat}", callback_data=f"adm_addcourse_dir_{cat}"))
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+            keyboard.append([InlineKeyboardButton("« Cancel", callback_data="adm_courses")])
+            
+            msg = """📂 **কোর্স যোগ করতে প্রথমে ক্যাটাগরি নির্বাচন করুন:**
+━━━━━━━━━━━━━━━━━━━━
+যে ক্যাটাগরি বা ফোল্ডারের অধীনে নতুন কোর্সটি যুক্ত করতে চান সেটি নির্বাচন করুন:"""
+            if query.message.photo:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("adm_setcat_"):
+        cat_selected = data.replace("adm_setcat_", "")
+        if cat_selected == "CUSTOM":
+            context.user_data["course_step"] = "type_custom_cat"
+            msg_p = "✍️ **নতুন ক্যাটাগরির নাম লিখুন (যেমন: HSC 28 বা SSC):**\n\n(বাতিল করতে নিচের বাটনে চাপুন)"
+            k_canc = [[InlineKeyboardButton("« Cancel", callback_data="adm_courses")]]
+            if query.message.photo:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await query.message.reply_text(msg_p, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_canc))
+            else:
+                await query.edit_message_text(msg_p, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_canc))
             return
 
         new_course = context.user_data.get("new_course", {})
@@ -5172,15 +5918,16 @@ Choose how you want to broadcast:
 
         if sub_chosen == "CUSTOM":
             context.user_data["course_step"] = "type_custom_sub"
-            msg_p = "✍️ **নতুন সাব-ক্যাটাগরির নাম লিখুন (যেমন: Academic বা Physics):**\n\n(বাতিল করতে /cancel লিখুন)"
+            msg_p = "✍️ **নতুন সাব-ক্যাটাগরির নাম লিখুন (যেমন: Academic বা Physics):**\n\n(বাতিল করতে নিচের বাটনে চাপুন)"
+            k_canc = [[InlineKeyboardButton("« Cancel", callback_data="adm_courses")]]
             if query.message.photo:
                 try:
                     await query.message.delete()
                 except Exception:
                     pass
-                await query.message.reply_text(msg_p, parse_mode="Markdown")
+                await query.message.reply_text(msg_p, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_canc))
             else:
-                await query.edit_message_text(msg_p, parse_mode="Markdown")
+                await query.edit_message_text(msg_p, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_canc))
             return
 
         new_course["subcategory"] = sub_chosen
@@ -5435,46 +6182,43 @@ Choose how you want to broadcast:
         
         if step == "price":
             context.user_data["course_step"] = "name"
-            msg = "✨ **ধাপ ১/৭: কোর্সের নাম (Course Name) লিখে পাঠান:**\n\n(বাতিল করতে /cancel লিখুন)"
-            k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]]
+            fld = new_course.get("folder_path", "General")
+            cat = new_course.get("category", "General")
+            msg = f"""📁 **ডিরেক্টরি: `{fld}`**
+━━━━━━━━━━━━━━━━━━━━
+
+✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
+(যেমন: 📘 BH Biology Full Course | {cat})
+
+💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{fld}` ডিরেক্টরিতে সেট করা থাকবে।"""
+            k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{fld}")]]
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
             
         elif step == "description":
             context.user_data["course_step"] = "price"
-            p_price = f"📖 **Course Name:** `{new_course.get('name')}`\n\n💰 **ধাপ ২/৭: কোর্সের মূল্য লিখুন (Price in BDT):**\n(ফ্রি কোর্সের জন্য `0` লিখুন)"
+            p_price = f"📖 কোর্সের নাম: **{new_course.get('name', '')}**\n\n💰 **ধাপ ২/৪: কোর্সের মূল্য লিখুন (Price in BDT):**\n\n(যেমন: 400 বা ফ্রি কোর্সের জন্য 0 লিখুন)"
             keyboard = [
                 [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
             ]
             await query.edit_message_text(p_price, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
             
-        elif step == "category_select":
+        elif step == "link":
             context.user_data["course_step"] = "description"
-            p_desc = f"📖 **Course Name:** `{new_course.get('name')}`\n💰 **মূল্য:** {new_course.get('price')} BDT\n\n📝 **ধাপ ৩/৭: কোর্সের বিবরণ (Description) লিখুন:**"
+            price_val = new_course.get('price', 0)
+            price_tag = f"৳{price_val}" if price_val > 0 else "বিনামূল্যে (Free) 🎁"
+            p_desc = f"💰 মূল্য: **{price_tag}**\n\n📝 **ধাপ ৩/৪: কোর্সের বিস্তারিত বিবরণ (Description) লিখুন:**\n\n💡 শিক্ষক প্যানেল, সিলেবাস এবং কোর্সের বিস্তারিত ফিচার্স লিখুন (একাধিক লাইনে লিখতে পারেন):"
             keyboard = [
                 [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
             ]
             await query.edit_message_text(p_desc, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
             
-        elif step == "subcategory":
-            context.user_data["course_step"] = "category_select"
-            await send_admin_category_selector(query, context, "📂 **ধাপ ৪/৭: ক্যাটাগরি নির্বাচন করুন:**")
-            
-        elif step == "link":
-            if new_course.get("folder_path"):
-                context.user_data["course_step"] = "description"
-                p_desc = f"📖 **Course Name:** `{new_course.get('name')}`\n💰 **মূল্য:** {new_course.get('price')} BDT\n\n📝 **ধাপ ৩/৭: কোর্সের বিবরণ (Description) লিখুন:**"
-                keyboard = [
-                    [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
-                ]
-                await query.edit_message_text(p_desc, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            else:
-                context.user_data["course_step"] = "subcategory"
-                await send_admin_subcategory_selector(query, context, new_course.get("category", "General"))
-                
         elif step == "image":
             context.user_data["course_step"] = "link"
-            p_text = """🔗 **ধাপ ৬/৭: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
+            fld = new_course.get("folder_path", "General")
+            p_text = f"""📁 **ডিরেক্টরি:** `{fld}`
 ━━━━━━━━━━━━━━━━━━━━
+🔗 **ধাপ ৪/৪: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
+
 💡 লিংক না থাকলে বা পরে দিতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
             keyboard = [
                 [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Link", callback_data="adm_skip_link")],
@@ -5492,10 +6236,9 @@ Choose how you want to broadcast:
         for cid, c in list(courses.items())[:30]:
             price_tag = f" ({c['price']}৳)" if c.get('price', 0) > 0 else " (Free 🎁)"
             keyboard.append([
-                InlineKeyboardButton(f"{c['name']} — {c['price']}৳" if c.get('price', 0) > 0 else f"{c['name']} — Free 🎁", callback_data=f"adm_edit_{cid}")
+                InlineKeyboardButton(f"{c['name']}{price_tag}", callback_data=f"adm_edit_{cid}")
             ])
         keyboard.append([InlineKeyboardButton("« Course Management", callback_data="adm_courses")])
-
         msg_text = "📋 **All Courses List:**\n━━━━━━━━━━━━━━━━━━━━\nSelect any course to view details, edit or delete:"
         if query.message.photo:
             try:
@@ -5505,30 +6248,6 @@ Choose how you want to broadcast:
             await query.message.reply_text(msg_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             await query.edit_message_text(msg_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
-    elif data.startswith("adm_delcourse_"):
-        cid = data.replace("adm_delcourse_", "")
-        c = db.get_course(cid)
-        if c:
-            db.delete_course(cid)
-            await query.answer(f"✅ '{c['name']}' deleted!", show_alert=True)
-            courses = db.get_all_courses()
-            keyboard = []
-            for id_k, val in list(courses.items())[:30]:
-                price_tag = f" ({val['price']}৳)" if val.get('price', 0) > 0 else " (Free 🎁)"
-                keyboard.append([
-                    InlineKeyboardButton(f"{val['name']} — {val['price']}৳" if val.get('price', 0) > 0 else f"{val['name']} — Free 🎁", callback_data=f"adm_edit_{id_k}")
-                ])
-            keyboard.append([InlineKeyboardButton("« Course Management", callback_data="adm_courses")])
-            msg_text = "📋 **All Courses List:**\n━━━━━━━━━━━━━━━━━━━━\nSelect any course to view details, edit or delete:"
-            if query.message.photo:
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                await query.message.reply_text(msg_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            else:
-                await query.edit_message_text(msg_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("adm_course_toggle_"):
         cid = data.replace("adm_course_toggle_", "")
@@ -5682,127 +6401,425 @@ Choose how you want to broadcast:
 
     # ==================== E-BOOK MANAGEMENT ====================
     elif data == "adm_ebooks":
-        ebooks = db.get_all_ebooks()
-        msg = f"""📖 **E-Book Management Dashboard**
+        await render_admin_ebook_folder_directory(query, context, "")
+
+    elif data.startswith("adm_ebdir_"):
+        path = data.replace("adm_ebdir_", "")
+        await render_admin_ebook_folder_directory(query, context, path)
+
+    elif data == "adm_ebfld_addfolder":
+        active_dir = context.user_data.get("active_eb_dir", "")
+        context.user_data["admin_add_eb_subcat"] = True
+        context.user_data["admin_eb_subcat_target_parent"] = active_dir
+        parent_display = active_dir if active_dir else "Root (মূল ক্যাটাগরি)"
+        
+        msg = f"""📁 **ই-বুক ফোল্ডার অবস্থান:** `{parent_display}`
 ━━━━━━━━━━━━━━━━━━━━
+➕ **নতুন ক্যাটাগরি বা ফোল্ডারের নাম লিখে পাঠান:**
+(যেমন: HSC 26, Medical, Physics, Formula Sheet ইত্যাদি)
 
-📚 **Total E-Books:** `{len(ebooks)}`
-💡 এখান থেকে আপনি সরাসরি **PDF Document ফাইল**, **Google Drive লিংক** অথবা ডাউনলোড লিংক দিয়ে নতুন ই-বুক যুক্ত, এডিট এবং ডিলিট করতে পারবেন।"""
-
-        keyboard = [
-            [InlineKeyboardButton("➕ Add New E-Book", callback_data="adm_add_ebook")],
-            [InlineKeyboardButton("📋 All E-Books List", callback_data="adm_list_ebooks")],
-            [InlineKeyboardButton("« Admin Menu", callback_data="adm_main")]
-        ]
+(বাতিল করতে /cancel লিখুন)"""
+        k_c = [[InlineKeyboardButton("« Cancel", callback_data=f"adm_ebdir_{active_dir}")]]
         if query.message.photo:
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_c))
         else:
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_c))
 
-    elif data == "adm_add_ebook":
+    elif data == "adm_ebfld_addebook" or data.startswith("adm_addebook_dir_") or data == "adm_add_ebook":
+        if data.startswith("adm_addebook_dir_"):
+            active_dir = data.replace("adm_addebook_dir_", "")
+        else:
+            active_dir = context.user_data.get("active_eb_dir", "")
+
+        segments = [s.strip() for s in active_dir.split(">") if s.strip()]
+        cat = segments[0] if segments else "General"
+        sub = segments[-1] if len(segments) > 1 else "General"
+
+        context.user_data["active_eb_dir"] = active_dir
         context.user_data["admin_add_ebook"] = True
-        context.user_data["ebook_step"] = "init_choice"
-        context.user_data["new_ebook"] = {}
+        context.user_data["ebook_step"] = "name"
+        context.user_data["new_ebook"] = {
+            "category": cat,
+            "subcategory": sub,
+            "folder_path": active_dir
+        }
 
-        msg = """📝 **Add New E-Book (Professional System)**
+        path_disp = active_dir if active_dir else "General"
+        msg = f"""📁 **ই-বুক ডিরেক্টরি: `{path_disp}`**
 ━━━━━━━━━━━━━━━━━━━━
 
-💡 **ই-বুক যুক্ত করার সহজ উপায়:**
+✨ **ধাপ ১/৪: ই-বুকের নাম (E-Book Title) লিখে পাঠান:**
+(যেমন: 📘 HSC Physics Formula Sheet | {cat})
 
-1️⃣ 📄 **Direct PDF File Upload:**
-সরাসরি এই চ্যাটে একটি **PDF Document** ফাইল সেন্ড করুন (ক্যাপশনে নাম বা বিবরণ দিতে পারেন)।
-
-2️⃣ ⚡ **Instant 1-Message Add Template:**
-নিচের ফরম্যাটে মেসেজ পাঠান:
-`Title: HSC Physics Formula Sheet`
-`Category: HSC 28`
-`Price: 0`
-`Link: https://drive.google.com/...`
-`Description: Complete formula book (Optional)`
-
-3️⃣ 🪄 **Or Send E-Book Title:**
-
-💡 বাতিল করতে /cancel লিখুন।"""
-
+💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।"""
+        k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_ebdir_{active_dir}")]]
         if query.message.photo:
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✕ Cancel", callback_data="adm_ebooks")]]))
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
         else:
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✕ Cancel", callback_data="adm_ebooks")]]))
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
+
+    elif data.startswith("adm_ebfld_togglestatus_"):
+        active_dir = context.user_data.get("active_eb_dir", "")
+        if not active_dir:
+            await query.answer("Cannot toggle root directory status!", show_alert=True)
+            return
+        new_st = db.toggle_ebook_category_status(active_dir)
+        st_word = "🟢 Active (ON)" if new_st else "🔴 Inactive (OFF - Hidden)"
+        await query.answer(f"E-Book Category status changed to {st_word}!", show_alert=True)
+        await render_admin_ebook_folder_directory(query, context, active_dir)
+        return
+
+    elif data == "adm_ebfld_delfolder":
+        active_dir = context.user_data.get("active_eb_dir", "")
+        if not active_dir:
+            await query.answer("Cannot delete root directory!", show_alert=True)
+            return
+
+        segments = [s.strip() for s in active_dir.split(">") if s.strip()]
+        folder_to_delete = segments[-1]
+        parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
+
+        db.delete_ebook_sub_folder(parent_path, folder_to_delete)
+        await query.answer(f"✅ '{folder_to_delete}' deleted!", show_alert=True)
+        await render_admin_ebook_folder_directory(query, context, parent_path)
+
+    elif data.startswith("adm_ebfld_moveup_") or data.startswith("adm_ebfld_movedown_"):
+        direction = "up" if "moveup" in data else "down"
+        folder_name = data.replace("adm_ebfld_moveup_", "").replace("adm_ebfld_movedown_", "")
+        active_dir = context.user_data.get("active_eb_dir", "")
+        segments = [s.strip() for s in active_dir.split(">") if s.strip()]
+        parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
+        success = db.move_ebook_folder_order(parent_path, folder_name, direction)
+        if success:
+            await query.answer(f"✅ Moved {direction}!", show_alert=True)
+        else:
+            await query.answer(f"Cannot move {direction}!", show_alert=True)
+        await render_admin_ebook_folder_directory(query, context, active_dir)
+
+    elif data.startswith("adm_ebfld_mleft_"):
+        active_dir = context.user_data.get("active_eb_dir", "")
+        segments = [s.strip() for s in active_dir.split(">") if s.strip()]
+        if len(segments) <= 1:
+            await query.answer("⚠️ Already a root category, cannot move left!", show_alert=True)
+            return
+        current_name = segments[-1]
+        parent_path = " > ".join(segments[:-1])
+
+        success = db.move_ebook_folder_left(parent_path, current_name)
+        if success:
+            parent_segments = parent_path.split(" > ")
+            parent_parent = " > ".join(parent_segments[:-1]) if len(parent_segments) > 1 else ""
+            new_active_dir = f"{parent_parent} > {current_name}" if parent_parent else current_name
+            await query.answer("✅ Moved left successfully!", show_alert=True)
+            await render_admin_ebook_folder_directory(query, context, new_active_dir)
+        else:
+            await query.answer("❌ Move left failed!", show_alert=True)
+
+    elif data.startswith("adm_ebfld_mright_"):
+        active_dir = context.user_data.get("active_eb_dir", "")
+        segments = [s.strip() for s in active_dir.split(">") if s.strip()]
+        if not segments:
+            await query.answer("Cannot move!", show_alert=True)
+            return
+        current_name = segments[-1]
+        parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
+
+        siblings = [s for s in db.get_ebook_sub_folders(parent_path) if s != current_name]
+        if not siblings:
+            await query.answer("⚠️ No sibling folders to move into!", show_alert=True)
+            return
+
+        context.user_data["move_eb_folder_name"] = current_name
+        context.user_data["move_eb_folder_parent"] = parent_path
+        context.user_data["move_eb_folder_siblings"] = siblings
+
+        keyboard = []
+        for idx, s in enumerate(siblings):
+            keyboard.append([InlineKeyboardButton(f"📁 {s}", callback_data=f"adm_ebfld_doright_{idx}")])
+        keyboard.append([InlineKeyboardButton("« Cancel", callback_data=f"adm_ebdir_{active_dir}")])
+
+        await query.edit_message_text(
+            f"➡️ **Select a sibling folder to move '{current_name}' into:**",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("adm_ebfld_doright_"):
+        idx = int(data.replace("adm_ebfld_doright_", ""))
+        current_name = context.user_data.get("move_eb_folder_name")
+        parent_path = context.user_data.get("move_eb_folder_parent")
+        siblings = context.user_data.get("move_eb_folder_siblings", [])
+
+        if not current_name or idx >= len(siblings):
+            await query.answer("Session expired or invalid choice!", show_alert=True)
+            return
+
+        sibling_name = siblings[idx]
+        success = db.move_ebook_folder_right(parent_path, current_name, sibling_name)
+
+        context.user_data.pop("move_eb_folder_name", None)
+        context.user_data.pop("move_eb_folder_parent", None)
+        context.user_data.pop("move_eb_folder_siblings", None)
+
+        if success:
+            await query.answer(f"✅ Moved '{current_name}' into '{sibling_name}'!", show_alert=True)
+            await render_admin_ebook_folder_directory(query, context, parent_path)
+        else:
+            await query.answer("❌ Move failed!", show_alert=True)
+
+    elif data.startswith("adm_ebfld_moveup") or data.startswith("adm_ebfld_movedown"):
+        direction = "up" if "moveup" in data else "down"
+        subfolders = db.get_ebook_sub_folders("")
+        if not subfolders:
+            await query.answer("No categories to move!", show_alert=True)
+            return
+        parent_path = ""
+        folder_name = subfolders[0] if subfolders else ""
+        if not folder_name:
+            await query.answer("No category selected!", show_alert=True)
+            return
+        success = db.move_ebook_folder_order(parent_path, folder_name, direction)
+        if success:
+            await query.answer(f"✅ Moved {direction}!", show_alert=True)
+        else:
+            await query.answer(f"Cannot move {direction}!", show_alert=True)
+        await render_admin_ebook_folder_directory(query, context, "")
+
+    elif data.startswith("adm_ebfld_rename_"):
+        folder_name = data.replace("adm_ebfld_rename_", "")
+        active_dir = context.user_data.get("active_eb_dir", "")
+        segments = [s.strip() for s in active_dir.split(">") if s.strip()]
+        parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
+        context.user_data["rename_eb_folder_old"] = folder_name
+        context.user_data["rename_eb_folder_parent"] = parent_path
+        context.user_data["awaiting_eb_folder_rename"] = True
+        await query.edit_message_text(
+            f"✏️ **'{folder_name}' ফোল্ডারের নতুন নাম লিখে পাঠান:**\n\n(নতুন নাম লিখুন অথবা নিচের বাটনে চাপুন)",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data=f"adm_ebdir_{active_dir}")]])
+        )
 
     elif data.startswith("adm_setebcat_"):
         cat_selected = data.replace("adm_setebcat_", "")
-        new_ebook = context.user_data.get("new_ebook", {})
-        new_ebook["category"] = cat_selected
-        context.user_data["new_ebook"] = new_ebook
-        context.user_data["ebook_step"] = "price"
+        context.user_data["admin_add_ebook"] = True
+        context.user_data["ebook_step"] = "name"
+        context.user_data["new_ebook"] = {"category": cat_selected, "folder_path": cat_selected}
 
-        await query.edit_message_text(
-            f"📂 **Category `{cat_selected}` selected.**\n\n💰 **Enter E-Book Price in BDT (Send `0` for Free):**",
-            parse_mode="Markdown"
-        )
+        msg = f"""📁 **ক্যাটাগরি: `{cat_selected}`**
+━━━━━━━━━━━━━━━━━━━━
 
-    elif data == "adm_list_ebooks":
-        ebooks = db.get_all_ebooks()
-        if not ebooks:
-            await query.edit_message_text(
-                "❌ No E-Books found in database.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Add E-Book", callback_data="adm_add_ebook")],
-                    [InlineKeyboardButton("« E-Book Menu", callback_data="adm_ebooks")]
-                ])
-            )
-            return
+✨ **ধাপ ১/৪: ই-বুকের নাম (E-Book Title) লিখে পাঠান:**
+(যেমন: 📘 HSC Physics Formula Sheet | {cat_selected})
 
-        keyboard = []
-        for eid, eb in list(ebooks.items())[:30]:
-            p_tag = f" ({eb.get('price', 0)}৳)" if eb.get('price', 0) > 0 else " (Free 🎁)"
-            f_tag = " [PDF 📄]" if eb.get("file_id") else " [Link 🔗]"
-            keyboard.append([
-                InlineKeyboardButton(f"• {eb.get('name', 'E-Book')[:20]}{p_tag}{f_tag}", callback_data=f"adm_vieweb_{eid}")
-            ])
-        keyboard.append([InlineKeyboardButton("➕ Add New E-Book", callback_data="adm_add_ebook")])
-        keyboard.append([InlineKeyboardButton("« E-Book Management", callback_data="adm_ebooks")])
-
-        msg_text = f"📋 **All E-Books List ({len(ebooks)} Total):**\n━━━━━━━━━━━━━━━━━━━━\nSelect any E-Book to view, edit or delete:"
+💡 ক্যাটাগরি স্বয়ংক্রিয়ভাবে `{cat_selected}` সেট করা থাকবে।"""
+        k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_ebdir_{cat_selected}")]]
         if query.message.photo:
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
         else:
-            await query.edit_message_text(msg_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
+
+    elif data == "adm_cancel_ebook":
+        active_dir = context.user_data.get("active_eb_dir", "")
+        context.user_data["admin_add_ebook"] = False
+        context.user_data.pop("new_ebook", None)
+        context.user_data.pop("ebook_step", None)
+        await render_admin_ebook_folder_directory(query, context, active_dir)
+
+    elif data == "adm_ebook_back":
+        step = context.user_data.get("ebook_step")
+        new_ebook = context.user_data.get("new_ebook", {})
+        active_dir = new_ebook.get("folder_path") or new_ebook.get("category", "General")
+
+        if step == "price":
+            context.user_data["ebook_step"] = "name"
+            msg = f"""📁 **ডিরেক্টরি: `{active_dir}`**
+━━━━━━━━━━━━━━━━━━━━
+
+✨ **ধাপ ১/৪: ই-বুকের নাম (E-Book Title) লিখে পাঠান:**
+(যেমন: 📘 HSC Physics Formula Sheet | {active_dir})
+
+💡 ক্যাটাগরি স্বয়ংক্রিয়ভাবে `{active_dir}` সেট করা থাকবে।"""
+            k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]]
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
+
+        elif step == "description":
+            context.user_data["ebook_step"] = "price"
+            p_price = f"📖 ই-বুকের নাম: **{new_ebook.get('name', '')}**\n\n💰 **ধাপ ২/৪: ই-বুকের মূল্য লিখুন (Price in BDT):**\n\n(যেমন: 50 বা ফ্রি ই-বুকের জন্য 0 লিখুন)"
+            keyboard = [
+                [InlineKeyboardButton("« Back", callback_data="adm_ebook_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]
+            ]
+            await query.edit_message_text(p_price, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+        elif step == "file_or_link":
+            context.user_data["ebook_step"] = "description"
+            price_val = new_ebook.get('price', 0)
+            price_tag = f"৳{price_val}" if price_val > 0 else "বিনামূল্যে (Free) 🎁"
+            p_desc = f"💰 মূল্য: **{price_tag}**\n\n📝 **ধাপ ৩/৪: ই-বুকের বিস্তারিত বিবরণ (Description) লিখুন:**\n\n💡 ই-বুকের বিষয়বস্তু বা বৈশিষ্ট্য লিখুন (অথবা স্কিপ করতে নিচের বাটনে চাপুন):"
+            keyboard = [
+                [InlineKeyboardButton("« Back", callback_data="adm_ebook_back"), InlineKeyboardButton("⏭️ Skip Description", callback_data="adm_skipeb_desc")],
+                [InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]
+            ]
+            await query.edit_message_text(p_desc, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data == "adm_skipeb_desc":
+        new_ebook = context.user_data.get("new_ebook", {})
+        new_ebook["description"] = "প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।"
+        context.user_data["new_ebook"] = new_ebook
+        active_dir = new_ebook.get("folder_path") or new_ebook.get("category", "General")
+
+        if new_ebook.get("file_id"):
+            await send_admin_ebook_preview(query, context, new_ebook)
+        else:
+            context.user_data["ebook_step"] = "file_or_link"
+            p_text = f"""📁 **ডিরেক্টরি:** `{active_dir}`
+━━━━━━━━━━━━━━━━━━━━
+📄 **ধাপ ৪/৪: PDF ফাইলটি সরাসরি আপলোড করুন অথবা ডাউনলোড লিংক পাঠান:**
+
+💡 ফাইল পাঠানোর নিয়ম:
+• সরাসরি এই চ্যাটে Telegram **PDF Document** ফাইল সেন্ড করুন (সরাসরি ডাউনলোডের জন্য)।
+• অথবা Google Drive / Web ডাউনলোড লিংক লিখে পাঠান।"""
+            k_file = [
+                [InlineKeyboardButton("« Back", callback_data="adm_ebook_back"), InlineKeyboardButton("⏭️ Skip File (পরে যোগ করবেন)", callback_data="adm_skipeb_file")],
+                [InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]
+            ]
+            await query.edit_message_text(p_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_file))
+
+    elif data == "adm_skipeb_file":
+        new_ebook = context.user_data.get("new_ebook", {})
+        await send_admin_ebook_preview(query, context, new_ebook)
+
+    elif data == "adm_publisheb":
+        new_ebook = context.user_data.get("new_ebook", {})
+        if not new_ebook.get("name"):
+            await query.answer("⚠️ ই-বুকের তথ্য অসম্পূর্ণ!", show_alert=True)
+            return
+
+        ebook_id = f"EB-{int(datetime.now().timestamp())}"
+        new_ebook["id"] = ebook_id
+        active_fld = context.user_data.get("active_eb_dir", "")
+        if "folder_path" not in new_ebook or not new_ebook["folder_path"]:
+            new_ebook["folder_path"] = active_fld
+        if "category" not in new_ebook or not new_ebook["category"]:
+            segs = active_fld.split(" > ")
+            new_ebook["category"] = segs[0] if segs else "General"
+        if "price" not in new_ebook:
+            new_ebook["price"] = 0
+        if "description" not in new_ebook:
+            new_ebook["description"] = "প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।"
+
+        db.add_ebook(ebook_id, new_ebook)
+
+        context.user_data["admin_add_ebook"] = False
+        context.user_data.pop("new_ebook", None)
+        context.user_data.pop("ebook_step", None)
+
+        msg_success = f"""✅ **ই-বুক সফলভাবে প্রকাশিত হয়েছে!**
+━━━━━━━━━━━━━━━━━━━━
+
+📖 **নাম:** {new_ebook['name']}
+📂 **ডিরেক্টরি:** `{new_ebook.get('folder_path') or new_ebook.get('category')}`
+💰 **মূল্য:** {f"৳{new_ebook['price']}" if new_ebook['price'] > 0 else "Free 🎁"}"""
+
+        keyboard = [
+            [InlineKeyboardButton(f"📁 Open '{new_ebook.get('folder_path') or 'Folder'}'", callback_data=f"adm_ebdir_{new_ebook.get('folder_path', '')}")],
+            [InlineKeyboardButton("➕ Add Another E-Book", callback_data=f"adm_addebook_dir_{new_ebook.get('folder_path', '')}")],
+            [InlineKeyboardButton("« E-Book Management", callback_data="adm_ebooks")]
+        ]
+        await query.edit_message_text(msg_success, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("adm_vieweb_"):
         eid = data.replace("adm_vieweb_", "")
         await show_ebook_edit_dashboard(query, eid)
 
+    elif data.startswith("adm_eb_toggle_"):
+        eid = data.replace("adm_eb_toggle_", "")
+        eb = db.get_ebook(eid)
+        if eb:
+            new_status = "inactive" if eb.get("status") != "inactive" else "active"
+            db.update_ebook(eid, {"status": new_status})
+            tag = "🔴 Disabled" if new_status == "inactive" else "🟢 Enabled"
+            await query.answer(f"E-Book {tag}!", show_alert=True)
+            await show_ebook_edit_dashboard(query, eid)
+
+    elif data.startswith("adm_ebmove_mleft_"):
+        eid = data.replace("adm_ebmove_mleft_", "")
+        success = db.move_ebook_left(eid)
+        if success:
+            await query.answer("✅ Moved E-Book to parent folder!", show_alert=True)
+            await show_ebook_edit_dashboard(query, eid)
+        else:
+            await query.answer("⚠️ Already at root folder, cannot move left!", show_alert=True)
+
+    elif data.startswith("adm_ebmove_mright_"):
+        eid = data.replace("adm_ebmove_mright_", "")
+        eb = db.get_ebook(eid)
+        if not eb:
+            await query.answer("E-Book not found!", show_alert=True)
+            return
+
+        c_fld = str(eb.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ")
+        subfolders = db.get_ebook_sub_folders(c_fld)
+        if not subfolders:
+            await query.answer("⚠️ No sub-folders available in current directory to move into!", show_alert=True)
+            return
+
+        context.user_data["move_eb_target_id"] = eid
+        context.user_data["move_eb_target_fld"] = c_fld
+        context.user_data["move_eb_target_subs"] = subfolders
+
+        keyboard = []
+        for idx, sf in enumerate(subfolders):
+            keyboard.append([InlineKeyboardButton(f"📁 {sf}", callback_data=f"adm_ebmove_dosub_{idx}")])
+        keyboard.append([InlineKeyboardButton("« Cancel", callback_data=f"adm_vieweb_{eid}")])
+
+        await query.edit_message_text(
+            f"➡️ **Select a sub-folder to move '{eb.get('name')}' into:**",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+    elif data.startswith("adm_ebmove_dosub_"):
+        idx = int(data.replace("adm_ebmove_dosub_", ""))
+        eid = context.user_data.get("move_eb_target_id")
+        subfolders = context.user_data.get("move_eb_target_subs", [])
+
+        if not eid or idx >= len(subfolders):
+            await query.answer("Session expired!", show_alert=True)
+            return
+
+        target_sub = subfolders[idx]
+        success = db.move_ebook_right(eid, target_sub)
+
+        context.user_data.pop("move_eb_target_id", None)
+        context.user_data.pop("move_eb_target_fld", None)
+        context.user_data.pop("move_eb_target_subs", None)
+
+        if success:
+            await query.answer(f"✅ Moved into '{target_sub}'!", show_alert=True)
+            await show_ebook_edit_dashboard(query, eid)
+        else:
+            await query.answer("❌ Move failed!", show_alert=True)
+
     elif data.startswith("adm_deleb_"):
         eid = data.replace("adm_deleb_", "")
         eb = db.get_ebook(eid)
         if eb:
+            fld = eb.get("folder_path", "")
             db.delete_ebook(eid)
             await query.answer(f"✅ '{eb.get('name', 'E-Book')}' deleted successfully!", show_alert=True)
-            ebooks = db.get_all_ebooks()
-            keyboard = []
-            for id_k, val in list(ebooks.items())[:30]:
-                p_tag = f" ({val.get('price', 0)}৳)" if val.get('price', 0) > 0 else " (Free 🎁)"
-                f_tag = " [PDF 📄]" if val.get("file_id") else " [Link 🔗]"
-                keyboard.append([
-                    InlineKeyboardButton(f"• {val.get('name', 'E-Book')[:20]}{p_tag}{f_tag}", callback_data=f"adm_vieweb_{id_k}")
-                ])
-            keyboard.append([InlineKeyboardButton("➕ Add New E-Book", callback_data="adm_add_ebook")])
-            keyboard.append([InlineKeyboardButton("« E-Book Management", callback_data="adm_ebooks")])
-            msg_text = f"📋 **All E-Books List ({len(ebooks)} Total):**\n━━━━━━━━━━━━━━━━━━━━\nSelect any E-Book to view, edit or delete:"
-            await query.edit_message_text(msg_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await render_admin_ebook_folder_directory(query, context, fld)
 
     elif data.startswith("adm_editeb_"):
         eid = data.replace("adm_editeb_", "")
@@ -6062,22 +7079,42 @@ Choose how you want to broadcast:
     # ==================== COUPON & REFERRAL REWARD WIZARD ====================
     elif data == "adm_coupons":
         coupons = db.get_all_coupons()
+        active_count = sum(1 for c in coupons.values() if c.get("status", "active") == "active")
+        inactive_count = len(coupons) - active_count
+
+        msg = f"""🎟️ **Coupon & Referral Rewards Management**
+━━━━━━━━━━━━━━━━━━━━
+
+🏷️ **Totall Coupon:** `{len(coupons)}` 
+🟢 **Active Coupon:** `{active_count}` 
+🔴 **Inactive Coupon:** `{inactive_count}` 
+
+"""
+
         keyboard = [
-            [InlineKeyboardButton("➕ Create Coupon", callback_data="adm_add_coupon_start")],
-            [InlineKeyboardButton("📋 All Coupons", callback_data="adm_list_coupons")],
+            [InlineKeyboardButton("➕ Create New Coupon", callback_data="adm_add_coupon_start")],
+            [InlineKeyboardButton("📋 All Coupons List", callback_data="adm_list_coupons")],
             [InlineKeyboardButton("« Admin Menu", callback_data="adm_main")]
         ]
-        await query.edit_message_text(
-            f"✦ **Coupon & Referral Rewards Management:**\nActive Coupons: {len(coupons)}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        if query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "adm_add_coupon_start":
         context.user_data["admin_add_coupon_wizard"] = True
         context.user_data["coupon_wiz_step"] = "code"
         context.user_data["wiz_coupon"] = {}
         await query.edit_message_text(
-            "✦ **Enter Coupon Code (e.g. RATUL50 or SPECIAL100):**\n\n(Type /cancel to abort)"
+            "🏷️ **Enter New Coupon Code**\n\n"
+            "Send your coupon code below.\n"
+            "👉 Example: `SPECIAL50` or `RATUL20`\n\n"
+            "❌ To cancel, send `/cancel`.",
+            parse_mode="Markdown"
         )
 
     elif data.startswith("cpnwiz_type_"):
@@ -6085,57 +7122,214 @@ Choose how you want to broadcast:
         context.user_data["wiz_coupon"]["discount_type"] = dtype
         context.user_data["coupon_wiz_step"] = "discount_value"
 
-        prompt = "💰 **Enter Fixed Discount Amount in BDT (e.g. 50):**" if dtype == "fixed" else "🔢 **Enter Percentage Discount (%) (e.g. 15):**"
-        await query.edit_message_text(prompt)
+        prompt = "💰 **Enter Fixed Discount Amount (৳):**" if dtype == "fixed" else "📊 **Enter Discount Rate (%):**"
+        await query.edit_message_text(prompt, parse_mode="Markdown")
+
+    elif data.startswith("cpnwiz_scope_"):
+        scope = data.replace("cpnwiz_scope_", "")
+        if scope == "all":
+            context.user_data["wiz_coupon"]["applicable_category"] = "All"
+            context.user_data["wiz_coupon"]["applicable_course_id"] = None
+            context.user_data["wiz_coupon"]["applicable_course_name"] = None
+            context.user_data["coupon_wiz_step"] = "usage_limit"
+            await query.edit_message_text("🔢 **Enter Maximum Usage Limit (e.g., 100):**", parse_mode="Markdown")
+
+        elif scope == "cat":
+            cats = db.get_categories()
+            keyboard = []
+            row = []
+            for c in cats:
+                row.append(InlineKeyboardButton(f"📁 {c}", callback_data=f"cpnwiz_cat_{c}"))
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+            keyboard.append([InlineKeyboardButton("« Cancel", callback_data="adm_coupons")])
+            await query.edit_message_text("📂 **Select category:**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+        elif scope == "course":
+            courses = db.get_all_courses()
+            keyboard = []
+            for cid, c in list(courses.items())[:30]:
+                keyboard.append([InlineKeyboardButton(f"📘 {c['name'][:30]}", callback_data=f"cpnwiz_course_{cid}")])
+            keyboard.append([InlineKeyboardButton("« Cancel", callback_data="adm_coupons")])
+            await query.edit_message_text("🎯 **Choose specific course:**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("cpnwiz_cat_"):
         cat_chosen = data.replace("cpnwiz_cat_", "")
         context.user_data["wiz_coupon"]["applicable_category"] = cat_chosen
+        context.user_data["wiz_coupon"]["applicable_course_id"] = None
+        context.user_data["wiz_coupon"]["applicable_course_name"] = None
         context.user_data["coupon_wiz_step"] = "usage_limit"
-        await query.edit_message_text("🔢 **Enter Maximum Usage Limit (e.g. 100):**")
+        await query.edit_message_text(f"✅ Category `{cat_chosen}` selected.\n\n🔢 **Enter Maximum Usage Limit (e.g., 100):**", parse_mode="Markdown")
+
+    elif data.startswith("cpnwiz_course_"):
+        cid_chosen = data.replace("cpnwiz_course_", "")
+        c_obj = db.get_course(cid_chosen)
+        c_name = c_obj.get("name", "Specific Course") if c_obj else "Specific Course"
+        context.user_data["wiz_coupon"]["applicable_course_id"] = cid_chosen
+        context.user_data["wiz_coupon"]["applicable_course_name"] = c_name
+        context.user_data["wiz_coupon"]["applicable_category"] = "Specific"
+        context.user_data["coupon_wiz_step"] = "usage_limit"
+        await query.edit_message_text(f"✅ Course `{c_name}` selected.\n\n🔢 **Enter Maximum Usage Limit (e.g., 100):**", parse_mode="Markdown")
 
     elif data.startswith("cpnwiz_ref_"):
         choice = data.replace("cpnwiz_ref_", "")
         if choice == "yes":
             context.user_data["wiz_coupon"]["enable_referral_reward"] = True
             context.user_data["coupon_wiz_step"] = "reward_user_id"
-            await query.edit_message_text("👤 **Enter Telegram User ID of the reward recipient (e.g. 7610279126):**")
+            await query.edit_message_text("👤 **Enter Telegram User ID of recipient (e.g. 7610279126):**", parse_mode="Markdown")
         else:
             context.user_data["wiz_coupon"]["enable_referral_reward"] = False
             context.user_data["wiz_coupon"]["reward_user_id"] = None
+            context.user_data["wiz_coupon"]["reward_type"] = "fixed"
             context.user_data["wiz_coupon"]["reward_amount"] = 0
             await finalize_coupon_creation(query, context, user_id)
+
+    elif data.startswith("cpnwiz_reftype_"):
+        rtype = data.replace("cpnwiz_reftype_", "")
+        context.user_data["wiz_coupon"]["reward_type"] = rtype
+        context.user_data["coupon_wiz_step"] = "reward_amount"
+        r_uid = context.user_data["wiz_coupon"].get("reward_user_id", "")
+        if rtype == "fixed":
+            prompt = f"💰 **Enter Fixed Reward Amount in BDT for User `{r_uid}` (e.g., 30 or 50):**"
+        else:
+            prompt = f"📊 **Enter Reward Percentage (%) for User `{r_uid}` (e.g., 10 or 15):**"
+        await query.edit_message_text(prompt, parse_mode="Markdown")
 
     elif data == "adm_list_coupons":
         coupons = db.get_all_coupons()
         if not coupons:
-            await query.edit_message_text("❌ No coupons found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="adm_coupons")]]))
+            await query.edit_message_text("❌ কোনো কুপন পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="adm_coupons")]]))
             return
 
         keyboard = []
         for code, c in coupons.items():
+            status_icon = "🟢" if c.get("status", "active") == "active" else "🔴"
             dtype_s = "৳" if c.get("discount_type") == "fixed" else "%"
-            ref_badge = f" [🎁 Reward: {c.get('reward_amount', 0)}৳ -> {c.get('reward_user_id')}]" if c.get("enable_referral_reward") else ""
+            dval = c.get("discount_value", c.get("discount", 0))
+
+            if c.get("applicable_course_name"):
+                scope_str = f"[{c['applicable_course_name'][:14]}]"
+            elif c.get("applicable_category") and c["applicable_category"] != "All":
+                scope_str = f"[{c['applicable_category']}]"
+            else:
+                scope_str = "[All]"
+
             keyboard.append([
-                InlineKeyboardButton(f"✕ Delete: {code} ({c.get('discount_value', c.get('discount', 0))}{dtype_s}){ref_badge}", callback_data=f"adm_delcoupon_{code}")
+                InlineKeyboardButton(f"{status_icon} {code} ({dval}{dtype_s}) {scope_str}", callback_data=f"adm_view_coupon_{code}")
             ])
+        keyboard.append([InlineKeyboardButton("➕ Create Coupon", callback_data="adm_add_coupon_start")])
         keyboard.append([InlineKeyboardButton("« Back", callback_data="adm_coupons")])
 
-        await query.edit_message_text("✦ **Active Coupons List (Click to Delete):**", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("📋 **All Coupons List:**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("adm_view_coupon_"):
+        code = data.replace("adm_view_coupon_", "")
+        c = db.get_coupon(code)
+        if not c:
+            await query.answer("❌ No coupon found!", show_alert=True)
+            return
+
+        status = c.get("status", "active")
+        status_text = "🟢 Active " if status == "active" else "🔴 Inactive "
+        dtype_s = "৳ (Fixed)" if c.get("discount_type") == "fixed" else "% (Percentage)"
+        dval = c.get("discount_value", c.get("discount", 0))
+
+        if c.get("applicable_course_name"):
+            scope_desc = f"🎯 Specific Course: `{c['applicable_course_name']}`"
+        elif c.get("applicable_category") and c["applicable_category"] not in ["All", "Specific"]:
+            scope_desc = f"📂 Category: `{c['applicable_category']}`"
+        else:
+            scope_desc = "🌐 All Courses"
+
+        if c.get("enable_referral_reward") and c.get("reward_user_id"):
+            rtype = "৳ (Fixed)" if c.get("reward_type") == "fixed" else "% (Percentage)"
+            ref_info = f"👤 User ID: `{c.get('reward_user_id')}`\n🎁 **Commission:** {c.get('reward_amount', 0)} {rtype}"
+        else:
+            ref_info = "Disabled"
+
+        msg = f"""🏷️ **Coupon Code:** `{code}`
+━━━━━━━━━━━━━━━━━━━━
+
+📊 **Current Status:** {status_text}
+💰 **Discount:** {dval} {dtype_s}
+🎯 **Scope:** {scope_desc}
+🛒 **Minimum Purchase:** {c.get('min_purchase', 0)} ৳
+🔢 **Usage:** {c.get('used_count', 0)} / {c.get('usage_limit', c.get('uses', 100))} Times
+🤝 **Referral Reward:** {ref_info}"""
+
+        toggle_btn_text = "🔴 Deactivate Coupon" if status == "active" else "🟢 Activate Coupon"
+        keyboard = [
+            [InlineKeyboardButton(toggle_btn_text, callback_data=f"adm_toggle_coupon_{code}")],
+            [InlineKeyboardButton("🗑️ Delete Coupon", callback_data=f"adm_delcoupon_{code}")],
+            [InlineKeyboardButton("« Back to List", callback_data="adm_list_coupons")]
+        ]
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("adm_toggle_coupon_"):
+        code = data.replace("adm_toggle_coupon_", "")
+        c = db.get_coupon(code)
+        if c:
+            curr_status = c.get("status", "active")
+            new_status = "inactive" if curr_status == "active" else "active"
+            db.set_coupon_status(code, new_status)
+            status_msg = "Deactivated" if new_status == "inactive" else "Activated"
+            await query.answer(f"✅ Coupon '{code}' successfully {status_msg}!", show_alert=True)
+            # Refresh coupon view
+            c = db.get_coupon(code)
+            status = c.get("status", "active")
+            status_text = "🟢 Active " if status == "active" else "🔴 Inactive "
+            dtype_s = "৳ (Fixed)" if c.get("discount_type") == "fixed" else "% (Percentage)"
+            dval = c.get("discount_value", c.get("discount", 0))
+
+            if c.get("applicable_course_name"):
+                scope_desc = f"🎯 Specific Course: `{c['applicable_course_name']}`"
+            elif c.get("applicable_category") and c["applicable_category"] not in ["All", "Specific"]:
+                scope_desc = f"📂 Category: `{c['applicable_category']}`"
+            else:
+                scope_desc = "🌐 All Courses (Global)"
+
+            if c.get("enable_referral_reward") and c.get("reward_user_id"):
+                rtype = "৳ (Fixed)" if c.get("reward_type") == "fixed" else "% (Percentage)"
+                ref_info = f"👤 User ID: `{c.get('reward_user_id')}`\n🎁 **Commission:** {c.get('reward_amount', 0)} {rtype}"
+            else:
+                ref_info = "Disabled"
+
+            msg = f"""🏷️ **Coupon Code:** `{code}`
+━━━━━━━━━━━━━━━━━━━━
+
+📊 **Current Status:** {status_text}
+💰 **Discount:** {dval} {dtype_s}
+🎯 **Scope:** {scope_desc}
+🛒 **Minimum Purchase:** {c.get('min_purchase', 0)} ৳
+🔢 **Usage:** {c.get('used_count', 0)} / {c.get('usage_limit', c.get('uses', 100))} Times
+🤝 **Referral Reward:** {ref_info}"""
+
+            toggle_btn_text = "🔴 Deactivate Coupon" if status == "active" else "🟢 Activate Coupon"
+            keyboard = [
+                [InlineKeyboardButton(toggle_btn_text, callback_data=f"adm_toggle_coupon_{code}")],
+                [InlineKeyboardButton("🗑️ Delete Coupon", callback_data=f"adm_delcoupon_{code}")],
+                [InlineKeyboardButton("« Back to List", callback_data="adm_list_coupons")]
+            ]
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("adm_delcoupon_"):
         code = data.replace("adm_delcoupon_", "")
         db.delete_coupon(code)
-        await query.answer(f"✅ Coupon '{code}' deleted!", show_alert=True)
+        await query.answer(f"✅ Coupon '{code}' deleted successfully!", show_alert=True)
         coupons = db.get_all_coupons()
         keyboard = []
         for c_code, c_val in coupons.items():
+            status_icon = "🟢" if c_val.get("status", "active") == "active" else "🔴"
             dtype_s = "৳" if c_val.get("discount_type") == "fixed" else "%"
             keyboard.append([
-                InlineKeyboardButton(f"✕ Delete: {c_code} ({c_val.get('discount_value', 0)}{dtype_s})", callback_data=f"adm_delcoupon_{c_code}")
+                InlineKeyboardButton(f"{status_icon} {c_code} ({c_val.get('discount_value', 0)}{dtype_s})", callback_data=f"adm_view_coupon_{c_code}")
             ])
+        keyboard.append([InlineKeyboardButton("➕ Create Coupon", callback_data="adm_add_coupon_start")])
         keyboard.append([InlineKeyboardButton("« Back", callback_data="adm_coupons")])
-        await query.edit_message_text("✦ **Active Coupons List:**", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text("📋 **All Coupons List:**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data == "adm_stats":
         stats = db.get_stats()
@@ -6290,7 +7484,7 @@ async def handle_admin_user_mgmt_input(update: Update, context: ContextTypes.DEF
         try:
             val = int(text)
         except ValueError:
-            await update.message.reply_text("⚠️ অনুগ্রহ করে সঠিক পূর্ণসংখ্যা টাইপ করুন (যেমন: 500):")
+            await update.message.reply_text("⚠️ Please enter a valid integer (e.g., 500):")
             return
 
         db.update_balance(uid, val)
@@ -6299,7 +7493,7 @@ async def handle_admin_user_mgmt_input(update: Update, context: ContextTypes.DEF
             [InlineKeyboardButton("« User Menu", callback_data="adm_users")]
         ]
         await update.message.reply_text(
-            f"✅ **সফল হয়েছে!**\n👤 User `{uid}` এর ব্যালেন্স সফলভাবে আপডেট করে **{val} ৳** করা হয়েছে!",
+            f"✅ **Success!**\n👤 User `{uid}` balance has been updated to **{val} ৳**!",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -6350,7 +7544,7 @@ async def handle_admin_user_mgmt_input(update: Update, context: ContextTypes.DEF
                 [InlineKeyboardButton("« Admin List", callback_data="adm_admin_list")]
             ]
             await update.message.reply_text(
-                f"❌ ইউজার পাওয়া যায়নি! নিশ্চিত করুন যে `{text}` বটটিতে স্টার্ট করেছে বা সঠিক User ID দিয়েছেন।",
+                f"❌ User not found! Ensure that `{text}` has started the bot or provide a valid User ID.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -6361,7 +7555,7 @@ async def handle_admin_user_mgmt_input(update: Update, context: ContextTypes.DEF
             try:
                 await context.bot.send_message(
                     target_uid,
-                    "🎉 **অভিনন্দন!**\nআপনাকে **StudyMart** এর এডমিন হিসেবে যুক্ত করা হয়েছে।\n👉 এডমিন প্যানেল ওপেন করতে /admin কমান্ড ব্যবহার করুন।",
+                    "🎉 **Congratulations!**\nYou have been added as an admin to **StudyMart**.\n👉 Use /admin command to open the admin panel.",
                     parse_mode="Markdown"
                 )
             except Exception:
@@ -6370,12 +7564,12 @@ async def handle_admin_user_mgmt_input(update: Update, context: ContextTypes.DEF
             u_info = db.get_user(target_uid)
             u_name = (u_info.get("full_name") if u_info else "") or f"User {target_uid}"
             keyboard = [
-                [InlineKeyboardButton("👑 View Admin List", callback_data="adm_admin_list")],
-                [InlineKeyboardButton("👤 View User Profile", callback_data=f"adm_uview_{target_uid}")],
+                [InlineKeyboardButton("🔐 Configure Permissions (পারমিশন সেট করুন)", callback_data=f"adm_perm_{target_uid}")],
+                [InlineKeyboardButton("👑 View Admin List", callback_data="adm_admin_list"), InlineKeyboardButton("👤 User Profile", callback_data=f"adm_uview_{target_uid}")],
                 [InlineKeyboardButton("« User Management", callback_data="adm_users")]
             ]
             await update.message.reply_text(
-                f"✅ **সফল হয়েছে!**\n👑 **{u_name}** (`{target_uid}`) কে সফলভাবে এডমিন হিসেবে নিযুক্ত করা হয়েছে!",
+                f"✅ **Success!**\n👑 **{u_name}** (`{target_uid}`) has been successfully appointed as an admin!",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -6385,7 +7579,7 @@ async def handle_admin_user_mgmt_input(update: Update, context: ContextTypes.DEF
                 [InlineKeyboardButton("« User Management", callback_data="adm_users")]
             ]
             await update.message.reply_text(
-                f"ℹ️ ইউজার `{target_uid}` ইতিমধ্যে একজন এডমিন হিসেবে রয়েছে!",
+                f"ℹ️ User `{target_uid}` is already an admin!",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
@@ -6857,6 +8051,7 @@ async def handle_admin_coupon_creation_wizard(update: Update, context: ContextTy
         ]
         await update.message.reply_text(
             f"🏷️ **Coupon Code:** `{wiz['code']}`\n\n👇 **Select Discount Type:**",
+            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -6864,11 +8059,11 @@ async def handle_admin_coupon_creation_wizard(update: Update, context: ContextTy
         try:
             wiz["discount_value"] = int(text)
         except ValueError:
-            await update.message.reply_text("⚠️ Please enter a valid whole number:")
+            await update.message.reply_text("⚠️ Please enter a valid number:")
             return
         context.user_data["wiz_coupon"] = wiz
         context.user_data["coupon_wiz_step"] = "min_purchase"
-        await update.message.reply_text("💰 **Minimum Course Purchase Amount in BDT?**\n(Send `0` for no minimum limit)")
+        await update.message.reply_text("💰 **Minimum purchase amount required to use this coupon?**\n(Enter `0` if no minimum limit):", parse_mode="Markdown")
 
     elif step == "min_purchase":
         try:
@@ -6876,20 +8071,18 @@ async def handle_admin_coupon_creation_wizard(update: Update, context: ContextTy
         except ValueError:
             wiz["min_purchase"] = 0
         context.user_data["wiz_coupon"] = wiz
-        context.user_data["coupon_wiz_step"] = "cat_select"
+        context.user_data["coupon_wiz_step"] = "scope_select"
 
-        cats = db.get_categories()
-        keyboard = [[InlineKeyboardButton("🌐 All Categories", callback_data="cpnwiz_cat_All")]]
-        row = []
-        for c in cats:
-            row.append(InlineKeyboardButton(f"◈ {c}", callback_data=f"cpnwiz_cat_{c}"))
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-        if row:
-            keyboard.append(row)
-
-        await update.message.reply_text("📂 **Select applicable category for this coupon:**", reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard = [
+            [InlineKeyboardButton("🌐 All Courses", callback_data="cpnwiz_scope_all")],
+            [InlineKeyboardButton("📂 By Category", callback_data="cpnwiz_scope_cat")],
+            [InlineKeyboardButton("🎯 Specific Course", callback_data="cpnwiz_scope_course")]
+        ]
+        await update.message.reply_text(
+            "🎯 **Coupon Scope:**\n━━━━━━━━━━━━━━━━━━━━\nThis coupon will be applicable to which course?",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
     elif step == "usage_limit":
         try:
@@ -6906,9 +8099,10 @@ async def handle_admin_coupon_creation_wizard(update: Update, context: ContextTy
             ]
         ]
         await update.message.reply_text(
-            """🎁 **Enable Referral Reward for a User?**
+            """🎁 **Want to add Referral/Affiliate Reward?**
 ━━━━━━━━━━━━━━━━━━━━
-(Should a specific partner user earn reward when someone buys a course with this coupon?)""",
+Will any specific partner/user get a commission/reward from the sales made using this coupon?""",
+            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -6916,11 +8110,22 @@ async def handle_admin_coupon_creation_wizard(update: Update, context: ContextTy
         try:
             wiz["reward_user_id"] = int(text)
         except ValueError:
-            await update.message.reply_text("⚠️ Please enter a valid numeric Telegram User ID:")
+            await update.message.reply_text("⚠️ Please enter a valid Telegram User ID (Numeric):")
             return
         context.user_data["wiz_coupon"] = wiz
-        context.user_data["coupon_wiz_step"] = "reward_amount"
-        await update.message.reply_text(f"💰 **How much BDT should User `{wiz['reward_user_id']}` earn per successful order?**\n(e.g. 30 or 50):")
+        context.user_data["coupon_wiz_step"] = "reward_type_select"
+
+        keyboard = [
+            [
+                InlineKeyboardButton("💵 Fixed Amount (BDT)", callback_data="cpnwiz_reftype_fixed"),
+                InlineKeyboardButton("📊 Percentage (%)", callback_data="cpnwiz_reftype_percentage")
+            ]
+        ]
+        await update.message.reply_text(
+            f"👤 **User ID:** `{wiz['reward_user_id']}`\n\n👇 **Select Commission/Reward Type:**",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
     elif step == "reward_amount":
         try:
@@ -6939,9 +8144,12 @@ async def finalize_coupon_creation(target, context: ContextTypes.DEFAULT_TYPE, u
     dval = wiz.get("discount_value", 0)
     min_p = wiz.get("min_purchase", 0)
     cat = wiz.get("applicable_category", "All")
+    cid = wiz.get("applicable_course_id")
+    cname = wiz.get("applicable_course_name")
     limit = wiz.get("usage_limit", 100)
     ref_on = wiz.get("enable_referral_reward", False)
     r_uid = wiz.get("reward_user_id")
+    r_type = wiz.get("reward_type", "fixed")
     r_amt = wiz.get("reward_amount", 0)
 
     db.add_coupon(
@@ -6950,9 +8158,12 @@ async def finalize_coupon_creation(target, context: ContextTypes.DEFAULT_TYPE, u
         discount_value=dval,
         min_purchase=min_p,
         applicable_category=cat,
+        applicable_course_id=cid,
+        applicable_course_name=cname,
         usage_limit=limit,
         enable_referral_reward=ref_on,
         reward_user_id=r_uid,
+        reward_type=r_type,
         reward_amount=r_amt
     )
 
@@ -6960,20 +8171,34 @@ async def finalize_coupon_creation(target, context: ContextTypes.DEFAULT_TYPE, u
     context.user_data.pop("wiz_coupon", None)
     context.user_data.pop("coupon_wiz_step", None)
 
-    ref_info = f"\n🎁 **Referral Reward:** {r_amt} ৳ ➡️ User ID: `{r_uid}`" if ref_on else "\n🎁 **Referral Reward:** Disabled"
+    if cid and cname:
+        scope_str = f"🎯 Course: `{cname}`"
+    elif cat and cat not in ["All", "Specific"]:
+        scope_str = f"📂 Category: `{cat}`"
+    else:
+        scope_str = "🌐 All Courses (Global)"
+
+    if ref_on and r_uid:
+        rtype_s = "৳ (Fixed)" if r_type == "fixed" else "% (Percentage)"
+        ref_info = f"\n🎁 **Referral Reward:** {r_amt} {rtype_s} ➡️ User ID: `{r_uid}`"
+    else:
+        ref_info = "\n🎁 **Referral Reward:** Disabled"
+
     dtype_str = f"{dval} ৳ (Fixed)" if dtype == "fixed" else f"{dval}% (Percentage)"
 
-    msg = f"""🎉 **Coupon Created Successfully!**
+    msg = f"""🎉 **Coupon created successfully!**
 ━━━━━━━━━━━━━━━━━━━━
 
-🎟️ **Code:** `{code}`
+🏷️ **Coupon Code:** `{code}`
 💰 **Discount:** {dtype_str}
-📂 **Category:** {cat}
+🎯 **Scope:** {scope_str}
+🛒 **Minimum Order:** {min_p} ৳
 🔢 **Usage Limit:** {limit} times{ref_info}"""
 
     keyboard = [
-        [InlineKeyboardButton("✦ All Coupons", callback_data="adm_list_coupons")],
-        [InlineKeyboardButton("« Admin Menu", callback_data="adm_main")]
+        [InlineKeyboardButton("📋 All Coupons List", callback_data="adm_list_coupons")],
+        [InlineKeyboardButton("➕ Create Another Coupon", callback_data="adm_add_coupon_start")],
+        [InlineKeyboardButton("« Coupon Management", callback_data="adm_coupons")]
     ]
 
     if hasattr(target, "reply_text"):
@@ -7072,13 +8297,13 @@ async def handle_admin_category_creation(update: Update, context: ContextTypes.D
             [InlineKeyboardButton("« All Categories", callback_data="adm_categories")]
         ]
         await update.message.reply_text(
-            f"✅ **নতুন ক্যাটাগরি '{text}' সফলভাবে তৈরি হয়েছে!**\n\n💡 কোনো অটো সাব-ক্যাটাগরি তৈরি করা হয়নি। আপনি প্রয়োজন অনুযায়ী সাব-ক্যাটাগরি যোগ করতে পারেন:",
+            f"✅ **New Category '{text}' created successfully!**\n\n💡 No automatic sub-categories were created. You can add sub-categories as needed:",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
         await update.message.reply_text(
-            f"ℹ️ ক্যাটাগরি '{text}' ইতিমধ্যে বিদ্যমান রয়েছে!",
+            f"ℹ️ Category '{text}' already exists!",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📂 Categories Management", callback_data="adm_categories")]])
         )
 
@@ -7106,7 +8331,7 @@ async def handle_admin_subcategory_creation(update: Update, context: ContextType
             [InlineKeyboardButton(f"« Back to '{parent or 'All Categories'}'", callback_data=f"adm_dir_{parent}")]
         ]
         await update.message.reply_text(
-            f"✅ **নতুন ফোল্ডার '{text}' সফলভাবে তৈরি হয়েছে!**\n\n📁 **অবস্থান:** `{new_path}`",
+            f"✅ **New Folder '{text}' created successfully!**\n\n📁 **Location:** `{new_path}`",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -7115,11 +8340,43 @@ async def handle_admin_subcategory_creation(update: Update, context: ContextType
             [InlineKeyboardButton(f"« Back to '{parent or 'All Categories'}'", callback_data=f"adm_dir_{parent}")],
             [InlineKeyboardButton("📂 All Categories", callback_data="adm_categories")]
         ]
+async def handle_admin_ebook_subcategory_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+    parent = context.user_data.get("admin_eb_subcat_target_parent") or ""
+    context.user_data["admin_add_eb_subcat"] = False
+    context.user_data.pop("admin_eb_subcat_target_parent", None)
+
+    if text == "/cancel":
+        back_kb = [[InlineKeyboardButton(f"« Back to '{parent or 'All Categories'}'", callback_data=f"adm_ebdir_{parent}")] if parent else [InlineKeyboardButton("« All Categories", callback_data="adm_ebooks")]]
+        await update.message.reply_text("✕ Aborted.", reply_markup=InlineKeyboardMarkup(back_kb))
+        return
+
+    added = db.add_ebook_sub_folder(parent, text)
+    new_path = f"{parent} > {text}" if parent else text
+    if added:
+        keyboard = [
+            [InlineKeyboardButton(f"📁 Open '{text}' Folder", callback_data=f"adm_ebdir_{new_path}")],
+            [InlineKeyboardButton(f"➕ Add E-Book in '{text}'", callback_data=f"adm_addebook_dir_{new_path}")],
+            [InlineKeyboardButton(f"➕ Add Another Sub-Folder in '{parent or 'Root'}'", callback_data="adm_ebfld_addfolder")],
+            [InlineKeyboardButton(f"« Back to '{parent or 'All Categories'}'", callback_data=f"adm_ebdir_{parent}")]
+        ]
         await update.message.reply_text(
-            f"ℹ️ ফোল্ডার '{text}' ইতিমধ্যে বিদ্যমান রয়েছে!",
+            f"✅ **New E-Book Folder '{text}' created successfully!**\n\n📁 **Location:** `{new_path}`",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+    else:
+        keyboard = [
+            [InlineKeyboardButton(f"« Back to '{parent or 'All Categories'}'", callback_data=f"adm_ebdir_{parent}")],
+            [InlineKeyboardButton("📂 All Categories", callback_data="adm_ebooks")]
+        ]
+        await update.message.reply_text(
+            f"ℹ️ Folder '{text}' already exists!",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
 
 
 # ==================== SUPER EASY COURSE CREATION LOGIC ====================
@@ -7258,7 +8515,7 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
 
         k_cancel = [[InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]]
         await wizard_edit_or_reply(context, update,
-            f"📖 কোর্সের নাম: **{course_name}**\n\n💰 **ধাপ ২/৬: কোর্সের মূল্য লিখুন (Price in BDT):**\n\n(যেমন: 400 বা ফ্রি কোর্সের জন্য 0 লিখুন)",
+            f"📖 কোর্সের নাম: **{course_name}**\n\n💰 **ধাপ ২/৪: কোর্সের মূল্য লিখুন (Price in BDT):**\n\n(যেমন: 400 বা ফ্রি কোর্সের জন্য 0 লিখুন)",
             reply_markup=InlineKeyboardMarkup(k_cancel)
         )
 
@@ -7276,7 +8533,7 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
         price_tag = f"৳{price_val}" if price_val > 0 else "বিনামূল্যে (Free) 🎁"
         k_cancel = [[InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]]
         await wizard_edit_or_reply(context, update,
-            f"💰 মূল্য: **{price_tag}**\n\n📝 **ধাপ ৩/৬: কোর্সের বিস্তারিত বিবরণ (Description) লিখুন:**\n\n💡 শিক্ষক প্যানেল, সিলেবাস এবং কোর্সের বিস্তারিত ফিচার্স লিখুন (একাধিক লাইনে লিখতে পারেন):",
+            f"💰 মূল্য: **{price_tag}**\n\n📝 **ধাপ ৩/৪: কোর্সের বিস্তারিত বিবরণ (Description) লিখুন:**\n\n💡 শিক্ষক প্যানেল, সিলেবাস এবং কোর্সের বিস্তারিত ফিচার্স লিখুন (একাধিক লাইনে লিখতে পারেন):",
             reply_markup=InlineKeyboardMarkup(k_cancel)
         )
 
@@ -7296,7 +8553,7 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
                 context.user_data["course_step"] = "link"
                 p_text = f"""📁 **ফোল্ডার:** `{new_course['category']}` ➔ `{new_course['subcategory']}`
 ━━━━━━━━━━━━━━━━━━━━
-🔗 **ধাপ ৪/৫: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
+🔗 **ধাপ ৪/৪: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
 
 💡 লিংক না থাকলে বা পরে দিতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
                 k_link = [
@@ -7308,7 +8565,7 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
                 context.user_data["course_step"] = "image"
                 p_img = f"""📁 **ফোল্ডার:** `{new_course['category']}` ➔ `{new_course['subcategory']}`
 ━━━━━━━━━━━━━━━━━━━━
-🖼️ **ধাপ ৫/৫: কোর্সের ব্যানার বা ছবি পাঠান:**
+🖼️ **ধাপ ৪/৪: কোর্সের ব্যানার বা ছবি পাঠান:**
 
 💡 ছবি ছাড়া প্রকাশ করতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
                 k_img = [
@@ -7329,7 +8586,7 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
                 context.user_data["course_step"] = "link"
                 p_text = f"""📁 **ক্যাটাগরি:** `{new_course['category']}`
 ━━━━━━━━━━━━━━━━━━━━
-🔗 **ধাপ ৪/৫: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
+🔗 **ধাপ ৪/৪: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
 
 💡 লিংক না থাকলে বা পরে দিতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
                 k_link = [
@@ -7561,46 +8818,41 @@ async def show_ebook_edit_dashboard(query, ebook_id: str, notice: str = ""):
         await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-def parse_quick_ebook_template(text: str, file_id: str = "", file_name: str = "") -> Optional[dict]:
-    if not text and not file_id:
-        return None
-    lines = text.strip().split("\n")
-    data = {}
-    for line in lines:
-        if ":" in line:
-            parts = line.split(":", 1)
-            k = parts[0].strip().lower()
-            v = parts[1].strip()
-            if "name" in k or "title" in k:
-                data["name"] = v
-            elif "cat" in k:
-                data["category"] = v
-            elif "price" in k:
-                try:
-                    num_str = "".join(filter(str.isdigit, v))
-                    data["price"] = int(num_str) if num_str else 0
-                except Exception:
-                    data["price"] = 0
-            elif "link" in k or "drive" in k or "url" in k or "download" in k:
-                data["access_link"] = v
-                data["download_link"] = v
-            elif "desc" in k:
-                data["description"] = v
+async def send_admin_ebook_preview(target, context: ContextTypes.DEFAULT_TYPE, eb_data: dict):
+    price = eb_data.get("price", 0)
+    price_tag = f"৳{price}" if price > 0 else "বিনামূল্যে (Free) 🎁"
+    cat = eb_data.get("category", "General")
+    
+    if eb_data.get("file_id"):
+        delivery = f"📄 সরাসরি Telegram PDF ফাইল (`{eb_data.get('file_name', 'Document.pdf')}`)"
+    elif eb_data.get("access_link"):
+        delivery = f"🔗 গুগল ড্রাইভ / ডাউনলোড লিংক (`{eb_data.get('access_link')}`)"
+    else:
+        delivery = "⚠️ কোনো ফাইল বা লিংক যুক্ত করা হয়নি (পরে এডিট করতে পারবেন)"
 
-    if data.get("name") or file_id:
-        if not data.get("name"):
-            data["name"] = file_name or "New E-Book PDF"
-        if "category" not in data:
-            data["category"] = "General"
-        if "price" not in data:
-            data["price"] = 0
-        if "description" not in data:
-            data["description"] = "প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।"
-        if file_id:
-            data["file_id"] = file_id
-            data["file_name"] = file_name or "document.pdf"
-        return data
-    return None
+    msg = f"""🎉 **ই-বুক প্রিভিউ ও নিশ্চিতকরণ (E-Book Preview):**
+━━━━━━━━━━━━━━━━━━━━
+
+📖 **নাম:** {eb_data.get('name', 'N/A')}
+📂 **ক্যাটাগরি:** `{cat}`
+💰 **মূল্য:** **{price_tag}**
+📁 **ডেলিভারি মেথড:** {delivery}
+
+📝 **বিবরণ:**
+{eb_data.get('description', 'প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।')}"""
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 Publish E-Book (প্রকাশ করুন)", callback_data="adm_publisheb")],
+        [InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]
+    ]
+    if hasattr(target, "reply_text"):
+        await target.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif hasattr(target, "edit_message_text"):
+        await target.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif hasattr(target, "message") and hasattr(target.message, "reply_text"):
+        await target.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif hasattr(target, "effective_message") and hasattr(target.effective_message, "reply_text"):
+        await target.effective_message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def handle_admin_ebook_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7608,7 +8860,6 @@ async def handle_admin_ebook_creation(update: Update, context: ContextTypes.DEFA
     text = msg.text.strip() if msg and msg.text else ""
     caption = msg.caption.strip() if msg and msg.caption else ""
     doc = msg.document
-    photo = msg.photo
     user_id = update.effective_user.id
     step = context.user_data.get("ebook_step")
 
@@ -7616,146 +8867,113 @@ async def handle_admin_ebook_creation(update: Update, context: ContextTypes.DEFA
         context.user_data["admin_add_ebook"] = False
         context.user_data.pop("new_ebook", None)
         context.user_data.pop("ebook_step", None)
-        back_kb = [[InlineKeyboardButton("📖 E-Book Management", callback_data="adm_ebooks")]]
+        back_kb = [[InlineKeyboardButton("« Cancel", callback_data="adm_ebooks")]]
         await update.message.reply_text("✕ E-Book creation cancelled.", reply_markup=InlineKeyboardMarkup(back_kb))
         return
 
-    # Check for Quick 1-Message Add Template
-    check_str = caption if caption else text
-    file_id = doc.file_id if doc else ""
-    file_name = doc.file_name if doc else ""
+    new_ebook = context.user_data.get("new_ebook", {})
+    cat = new_ebook.get("category", "General")
 
-    if step == "init_choice":
-        quick_ebook = parse_quick_ebook_template(check_str, file_id, file_name)
-        if quick_ebook and (len(check_str.split("\n")) > 1 or file_id):
-            ebook_id = f"EB-{int(datetime.now().timestamp())}"
-            quick_ebook["id"] = ebook_id
-            db.add_ebook(ebook_id, quick_ebook)
+    if step == "custom_cat":
+        if not text:
+            await update.message.reply_text("⚠️ অনুগ্রহ করে ক্যাটাগরির নাম লিখে পাঠান:")
+            return
+        cat = text
+        new_ebook["category"] = cat
+        context.user_data["new_ebook"] = new_ebook
+        context.user_data["ebook_step"] = "name"
 
-            context.user_data["admin_add_ebook"] = False
-            context.user_data.pop("new_ebook", None)
-            context.user_data.pop("ebook_step", None)
-
-            source = f"📄 PDF Document ({quick_ebook.get('file_name', 'File')})" if quick_ebook.get("file_id") else (quick_ebook.get("access_link") or "None")
-
-            msg_done = f"""🎉 **E-Book Added Successfully!**
+        prompt = f"""📁 **ক্যাটাগরি: `{cat}`**
 ━━━━━━━━━━━━━━━━━━━━
 
-📖 **Title:** {quick_ebook['name']}
-💰 **Price:** {quick_ebook['price']} ৳
-📂 **Category:** {quick_ebook['category']}
-📁 **File / Link:** {source}"""
+✨ **ধাপ ১/৪: ই-বুকের নাম (E-Book Title) লিখে পাঠান:**
+(যেমন: 📘 HSC Physics Formula Sheet | {cat})
 
-            await update.message.reply_text(
-                msg_done,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📋 All E-Books", callback_data="adm_list_ebooks")],
-                    [InlineKeyboardButton("« Admin Menu", callback_data="adm_main")]
-                ])
-            )
-            return
-
-    # Step-by-Step Interactive Wizard
-    new_ebook = context.user_data.get("new_ebook", {})
+💡 ক্যাটাগরি স্বয়ংক্রিয়ভাবে `{cat}` সেট করা থাকবে।"""
+        k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]]
+        await update.message.reply_text(prompt, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
+        return
 
     if step == "init_choice" or step == "name":
+        name_val = caption if caption else text
+        if doc and not name_val:
+            name_val = doc.file_name or "New E-Book PDF"
+        if not name_val:
+            await update.message.reply_text("⚠️ অনুগ্রহ করে ই-বুকের নাম লিখে পাঠান:")
+            return
+
+        new_ebook["name"] = name_val
         if doc:
             new_ebook["file_id"] = doc.file_id
             new_ebook["file_name"] = doc.file_name or "document.pdf"
-            new_ebook["name"] = caption if caption else (doc.file_name or "New E-Book")
-        elif text:
-            new_ebook["name"] = text
-        else:
-            await update.message.reply_text("⚠️ Please send E-Book Title or upload a PDF document:")
-            return
 
         context.user_data["new_ebook"] = new_ebook
-        context.user_data["ebook_step"] = "category_select"
+        context.user_data["ebook_step"] = "price"
 
-        cats = db.get_categories()
-        keyboard = []
-        row = []
-        for cat in cats:
-            row.append(InlineKeyboardButton(f"◈ {cat}", callback_data=f"adm_setebcat_{cat}"))
-            if len(row) == 2:
-                keyboard.append(row)
-                row = []
-        if row:
-            keyboard.append(row)
-        keyboard.append([InlineKeyboardButton("◈ General", callback_data="adm_setebcat_General")])
-
+        k_cancel = [[InlineKeyboardButton("« Back", callback_data="adm_ebook_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]]
         await update.message.reply_text(
-            f"📖 E-Book Title: **{new_ebook['name']}**\n\n👇 **Select Category:**",
+            f"📖 ই-বুকের নাম: **{name_val}**\n\n💰 **ধাপ ২/৪: ই-বুকের মূল্য লিখুন (Price in BDT):**\n\n(যেমন: 50 বা ফ্রি ই-বুকের জন্য 0 লিখুন)",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(k_cancel)
         )
 
     elif step == "price":
-        try:
-            num_str = "".join(filter(str.isdigit, text))
-            new_ebook["price"] = int(num_str) if num_str else 0
-        except ValueError:
-            await update.message.reply_text("⚠️ Please enter a valid number (Send `0` for Free):")
+        digits = re.findall(r"\d+", text)
+        if not digits:
+            await update.message.reply_text("⚠️ অনুগ্রহ করে সঠিক মূল্য লিখুন (যেমন: 50 বা ফ্রি হলে 0):")
             return
 
+        price_val = int(digits[0])
+        new_ebook["price"] = price_val
         context.user_data["new_ebook"] = new_ebook
-        context.user_data["ebook_step"] = "file_or_link"
+        context.user_data["ebook_step"] = "description"
 
+        price_tag = f"৳{price_val}" if price_val > 0 else "বিনামূল্যে (Free) 🎁"
+        k_cancel = [
+            [InlineKeyboardButton("« Back", callback_data="adm_ebook_back"), InlineKeyboardButton("⏭️ Skip Description", callback_data="adm_skipeb_desc")],
+            [InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]
+        ]
         await update.message.reply_text(
-            """📁 **Upload PDF Document OR Send Drive / Download Link:**
-━━━━━━━━━━━━━━━━━━━━
-
-💡 You can:
-1️⃣ Directly upload/send the **PDF document file** here.
-2️⃣ Or send a **Google Drive / Dropbox / Web link**.
-3️⃣ Or send `skip` to leave blank for now."""
+            f"💰 মূল্য: **{price_tag}**\n\n📝 **ধাপ ৩/৪: ই-বুকের বিস্তারিত বিবরণ (Description) লিখুন:**\n\n💡 ই-বুকের বিষয়বস্তু বা বৈশিষ্ট্য লিখুন (অথবা স্কিপ করতে নিচের বাটনে চাপুন):",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(k_cancel)
         )
+
+    elif step == "description":
+        desc_val = text if text and text != "/skip" else "প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।"
+        new_ebook["description"] = desc_val
+        context.user_data["new_ebook"] = new_ebook
+
+        if new_ebook.get("file_id"):
+            await send_admin_ebook_preview(update.message, context, new_ebook)
+            return
+
+        context.user_data["ebook_step"] = "file_or_link"
+        p_text = f"""📁 **ক্যাটাগরি:** `{cat}`
+━━━━━━━━━━━━━━━━━━━━
+📄 **ধাপ ৪/৪: PDF ফাইলটি সরাসরি আপলোড করুন অথবা ডাউনলোড লিংক পাঠান:**
+
+💡 ফাইল পাঠানোর নিয়ম:
+• সরাসরি এই চ্যাটে Telegram **PDF Document** ফাইল সেন্ড করুন (সরাসরি ডাউনলোডের জন্য)।
+• অথবা Google Drive / Web ডাউনলোড লিংক লিখে পাঠান।"""
+        k_file = [
+            [InlineKeyboardButton("« Back", callback_data="adm_ebook_back"), InlineKeyboardButton("⏭️ Skip File (পরে যোগ করবেন)", callback_data="adm_skipeb_file")],
+            [InlineKeyboardButton("✕ Cancel", callback_data="adm_cancel_ebook")]
+        ]
+        await update.message.reply_text(p_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_file))
 
     elif step == "file_or_link":
         if doc:
             new_ebook["file_id"] = doc.file_id
             new_ebook["file_name"] = doc.file_name or "document.pdf"
-            if caption:
-                new_ebook["description"] = caption
-        elif text and text.lower() != "skip":
+        elif text and text.lower() != "skip" and text != "/skip":
             if text.startswith("http"):
                 new_ebook["access_link"] = text
                 new_ebook["download_link"] = text
-            new_ebook["description"] = text
-        else:
-            if "description" not in new_ebook:
-                new_ebook["description"] = "প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।"
-
-        if "price" not in new_ebook:
-            new_ebook["price"] = 0
-        if "category" not in new_ebook:
-            new_ebook["category"] = "General"
-
-        ebook_id = f"EB-{int(datetime.now().timestamp())}"
-        new_ebook["id"] = ebook_id
-        db.add_ebook(ebook_id, new_ebook)
-
-        context.user_data["admin_add_ebook"] = False
-        context.user_data.pop("new_ebook", None)
-        context.user_data.pop("ebook_step", None)
-
-        source = f"📄 PDF Document ({new_ebook.get('file_name', 'File')})" if new_ebook.get("file_id") else (new_ebook.get("access_link") or "None")
-
-        msg_res = f"""🎉 **E-Book Added Successfully!**
-━━━━━━━━━━━━━━━━━━━━
-
-📖 **Title:** {new_ebook['name']}
-💰 **Price:** {new_ebook['price']} ৳
-📂 **Category:** {new_ebook['category']}
-📁 **Source:** {source}"""
-
-        await update.message.reply_text(
-            msg_res,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 All E-Books", callback_data="adm_list_ebooks")],
-                [InlineKeyboardButton("« Admin Menu", callback_data="adm_main")]
-            ])
-        )
+            else:
+                new_ebook["access_link"] = text
+        context.user_data["new_ebook"] = new_ebook
+        await send_admin_ebook_preview(update.message, context, new_ebook)
 
 
 async def handle_admin_ebook_edit_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7903,6 +9121,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("home", start))
     app.add_handler(CommandHandler("menu", start))
+    app.add_handler(CommandHandler("cancel", cancel_cmd))
+    app.add_handler(CommandHandler("stop", cancel_cmd))
     app.add_handler(CommandHandler("admin", admin_cmd))
     app.add_handler(CommandHandler("status", check_status))
     app.add_handler(CommandHandler("courses", lambda u, c: show_categories(u, c)))
@@ -7918,7 +9138,7 @@ def main():
 
     # Text, Photo, Video, Document & Forwarded Messages
     app.add_handler(MessageHandler(
-        filters.PHOTO | filters.VIDEO | filters.Document.ALL | (filters.TEXT & ~filters.COMMAND) | filters.FORWARDED,
+        filters.PHOTO | filters.VIDEO | filters.Document.ALL | filters.TEXT | filters.FORWARDED,
         handle_user_input
     ))
 

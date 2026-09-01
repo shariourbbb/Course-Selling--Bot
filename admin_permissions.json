@@ -1,0 +1,17 @@
+{
+  "8167080297": {
+    "course_manage": true,
+    "category_manage": true,
+    "orders": true,
+    "coupon": true,
+    "payment_settings": true,
+    "user_manage": true,
+    "broadcast": true,
+    "admin_manage": true,
+    "statistics": true,
+    "bot_settings": true,
+    "admin_permission": true,
+    "info_manage": true,
+    "ebook_manage": true
+  }
+}

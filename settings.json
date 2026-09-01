@@ -1,7 +1,7 @@
 {
   "maintenance_mode": false,
   "maintenance_message": "bot off monday",
-  "welcome_message": "🎓 StudyMart-এ আপনাকে স্বাগতম।\n\n📚 শুরু করতে নিচের কিবোর্ড থেকে আপনার Batch নির্বাচন করুন।\n/start",
+  "welcome_message": "👋 আসসালামু আলাইকুম,\n\n🎓 StudyMart-এ আপনাকে স্বাগতম।\n\nStudyMart একটি সম্পূর্ণ অটোমেটেড কোর্স প্ল্যাটফর্ম, যেখানে আপনি সহজেই আপনার পছন্দের কোর্স খুঁজে, ক্রয় করে এবং তাৎক্ষণিকভাবে অ্যাক্সেস করতে পারবেন।\n\n📚 শুরু করতে নিচের কিবোর্ড থেকে আপনার Batch নির্বাচন করুন।\n/start",
   "delivery_message": "🎉 **আলহামদুলিল্লাহ! আপনার পেমেন্ট অনুমোদিত হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **অর্ডার আইডি:** `{order_id}`\n📖 **কোর্স:** {course_name}\n💰 **টাকা:** {amount} ৳\n\n🎁 **আপনার কোর্সের লিংক ও অ্যাক্সেস:**\n{access_text}\n\n✨ যেকোনো সময় এই লিংক দেখতে বটে '✦ আমার কোর্সসমূহ' বাটনে ক্লিক করুন। শুভকামনা!",
   "fallback_message": "🔍 **'{query}' সম্পর্কিত কোনো কোর্স বা ই-বুক খুঁজে পাওয়া যায়নি।**\n\n💡 আপনি চাইলে সরাসরি নিচের বাটন থেকে সকল ক্যাটাগরি ও ক্লাস ব্রাউজ করতে পারেন:",
   "info_message": "about",
@@ -12,14 +12,12 @@
       {
         "text": "📚 Browse Courses",
         "action": "browse_categories",
-        "enabled": false
-      }
-    ],
-    [
+        "enabled": true
+      },
       {
         "text": "📖 Browse E-Book",
         "action": "browse_ebooks",
-        "enabled": false
+        "enabled": true
       }
     ],
     [
@@ -32,6 +30,16 @@
         "text": "📃 My E-Books",
         "action": "my_ebooks_nav",
         "enabled": false
+      },
+      {
+        "text": "💳 How To Buy",
+        "action": "https://t.me/paid_course_hsc/1129",
+        "enabled": true
+      },
+      {
+        "text": "📞Contact Admin",
+        "action": "https://t.me/helpline3012_bot",
+        "enabled": true
       }
     ],
     [
@@ -44,5 +52,11 @@
   ],
   "delivery_free_with_link": "Broadcast message Test",
   "delivery_paid_with_link": "🎉 আপনার Course Purchase সফল হয়েছে!\n\n📘 ${courseName}\n\n✅ Payment সফলভাবে সম্পন্ন হয়েছে।\n\nনিচের বাটনে ক্লিক করে Course-এ যুক্ত হয়ে যান।",
-  "delivery_paid_no_link": "🎉 আপনার Course Purchase সফল হয়েছে!\n\n📘 ${courseName}\n\n✅ Payment সফলভাবে সম্পন্ন হয়েছে।\n\n⚠️ এই Course-এর Join Link বর্তমানে যুক্ত করা হয়নি।\n\n📩 অনুগ্রহ করে @helpline3012_bot-এ যোগাযোগ করুন।"
+  "delivery_paid_no_link": "🎉 আপনার Course Purchase সফল হয়েছে!\n\n📘 ${courseName}\n\n✅ Payment সফলভাবে সম্পন্ন হয়েছে।\n\n⚠️ এই Course-এর Join Link বর্তমানে যুক্ত করা হয়নি।\n\n📩 অনুগ্রহ করে @helpline3012_bot-এ যোগাযোগ করুন।",
+  "inactive_categories": [
+    "TEST_CAT_XYZ > TEST_SUB_123"
+  ],
+  "inactive_ebook_categories": [
+    "TEST_EBOOK_CAT"
+  ]
 }

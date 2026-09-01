@@ -1,18 +1,21 @@
 {
-  "HSC 26": [
-    "General",
-    "Admission",
-    "Academy"
-  ],
-  "HSC 27": [],
-  "HSC 28": [],
   "SSC": [],
+  "HSC 27": [],
+  "HSC 28": [
+    "ABC"
+  ],
   "HSC 26 > Admission": [
     "🎗 VARSITY",
     "🥼 MEDICAL"
   ],
   "HSC 26 > Academy": [],
+  "HSC 26": [
+    "General",
+    "Admission",
+    "Academy"
+  ],
   "HSC 26 > Admission > 🎗 VARSITY": [],
   "HSC 26 > Admission > 🥼 MEDICAL": [],
-  "HSC 26 > General": []
+  "HSC 26 > General": [],
+  "HSC 28 > ABC": []
 }

@@ -41,5 +41,33 @@
     "access_link": "",
     "image": "AgACAgUAAxkBAAIOhmqVTeJAh8iOfbc_8cPO4fh-Q2bEAAI2EmsbrhSxVGGSH6jhhZ6WAQADAgADeQADPQQ",
     "id": "COURSE-1788169721"
+  },
+  "COURSE-1788235506": {
+    "category": "HSC 28",
+    "subcategory": "ABC",
+    "folder_path": "HSC 28 > ABC",
+    "program": "abc",
+    "name": "ABC",
+    "price": 800,
+    "description": "sdfsfdsgsdfg",
+    "features": "sdfsfdsgsdfg",
+    "instructor": "অভিজ্ঞ শিক্ষকবৃন্দ",
+    "access_link": "",
+    "image": "",
+    "id": "COURSE-1788235506"
+  },
+  "COURSE-1788262366": {
+    "category": "HSC 26",
+    "subcategory": "General",
+    "folder_path": "HSC 26",
+    "program": "general",
+    "name": "BH GA",
+    "price": 0,
+    "description": "নেল, সিলেবাস এবং কোর্সের বিস্তারিত ফিচার্স লিখুন (একাধিক লাইনে লিখতে পারেন):",
+    "features": "নেল, সিলেবাস এবং কোর্সের বিস্তারিত ফিচার্স লিখুন (একাধিক লাইনে লিখতে পারেন):",
+    "instructor": "অভিজ্ঞ শিক্ষকবৃন্দ",
+    "access_link": "",
+    "image": "AgACAgUAAxkBAAISxmqWt9uQoWnPOJaEDuy_1fXM9L-KAAJ4EGsbhCe4VAFeq0reol9WAQADAgADeQADPQQ",
+    "id": "COURSE-1788262366"
   }
 }
