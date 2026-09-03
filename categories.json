@@ -2,13 +2,19 @@
   "HSC 27": [
     "RMH"
   ],
-  "SSC": [
-    "SSC'27"
-  ],
+  "HSC 27 > RMH": [],
   "HSC 28": [
     "ABC",
     "Academy Program"
   ],
+  "HSC 28 > ABC": [],
+  "HSC 28 > Academy Program": [
+    "ACS"
+  ],
+  "HSC 28 > Academy Program > ACS": [
+    "ACS Physics"
+  ],
+  "HSC 28 > Academy Program > ACS > ACS Physics": [],
   "HSC 26 > Admission": [
     "🎗 VARSITY",
     "🥼 MEDICAL"
@@ -22,15 +28,6 @@
   ],
   "HSC 26 > Admission > 🥼 MEDICAL": [],
   "HSC 26 > General": [],
-  "HSC 28 > ABC": [],
-  "🫟 Skills": [],
-  "HSC 27 > RMH": [],
-  "HSC 28 > Academy Program": [
-    "ACS"
-  ],
-  "HSC 28 > Academy Program > ACS": [
-    "ACS Physics"
-  ],
-  "HSC 28 > Academy Program > ACS > ACS Physics": [],
-  "SSC > SSC'27": []
+  "SSC": [],
+  "🫟 Skills": []
 }

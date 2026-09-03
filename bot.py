@@ -3690,6 +3690,45 @@ async def render_admin_permission_dashboard(query, context: ContextTypes.DEFAULT
         await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+async def render_category_reorder_panel(query, context, parent_path: str = ""):
+    clean_parent = str(parent_path).strip().replace(" / ", " > ").replace("/", " > ")
+    folders = db.get_sub_folders(clean_parent, include_inactive=True)
+    parent_title = f"Folder '{clean_parent}'" if clean_parent else "All Categories"
+    msg = f"""🔀 <b>[ Reorder: {html.escape(parent_title)} ]</b>
+━━━━━━━━━━━━━━━━━━━━
+Use ⬆️ and ⬇️ buttons to change the order/position of items:
+
+"""
+    for i, f in enumerate(folders, 1):
+        full_path = f"{clean_parent} > {f}" if clean_parent else f
+        st_dot = "🟢" if db.is_category_active(full_path) else "🔴"
+        msg += f"<b>{i}.</b> {st_dot} <code>{html.escape(f)}</code>\n"
+
+    msg += "\n👇 <b>Tap ⬆️ or ⬇️ below to move:</b>"
+
+    keyboard = []
+    total = len(folders)
+    for idx, f in enumerate(folders):
+        row = [InlineKeyboardButton(f"📁 {f}", callback_data="noop_reorder")]
+        if idx > 0:
+            row.append(InlineKeyboardButton("⬆️", callback_data=f"adm_fld_reord_up_{idx}"))
+        if idx < total - 1:
+            row.append(InlineKeyboardButton("⬇️", callback_data=f"adm_fld_reord_dn_{idx}"))
+        keyboard.append(row)
+
+    back_cb = f"adm_dir_{clean_parent}" if clean_parent else "adm_dir_"
+    keyboard.append([InlineKeyboardButton("« Done / Back", callback_data=back_cb)])
+
+    if query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
 async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYPE, folder_path: str = ""):
     clean_path = str(folder_path).strip().replace(" / ", " > ").replace("/", " > ")
     context.user_data["active_dir"] = clean_path
@@ -3736,8 +3775,7 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
         ])
         if len(subfolders) > 1:
             keyboard.append([
-                InlineKeyboardButton("⬆️ Move Up", callback_data="adm_fld_moveup"),
-                InlineKeyboardButton("⬇️ Move Down", callback_data="adm_fld_movedown")
+                InlineKeyboardButton("🔀 Reorder Categories", callback_data="adm_fld_reorder_")
             ])
         keyboard.append([InlineKeyboardButton("« Admin Menu", callback_data="adm_main")])
 
@@ -3754,13 +3792,25 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
             InlineKeyboardButton("➕ Add Sub-Folder", callback_data="adm_fld_addfolder")
         ])
 
+        siblings = db.get_sub_folders(parent_path, include_inactive=True)
+        cur_pos_str = ""
+        if current_name in siblings:
+            cur_pos_str = f"\n🔢 <b>Position:</b> #{siblings.index(current_name) + 1} of {len(siblings)}"
+
+        # Clean Move buttons with clear labels
         move_row = [
-            InlineKeyboardButton("⬅️", callback_data=f"adm_fld_mleft_{current_name}"),
-            InlineKeyboardButton("⬆️", callback_data=f"adm_fld_moveup_{current_name}"),
-            InlineKeyboardButton("⬇️", callback_data=f"adm_fld_movedown_{current_name}"),
-            InlineKeyboardButton("➡️", callback_data=f"adm_fld_mright_{current_name}")
+            InlineKeyboardButton("⬆️ Move Up", callback_data=f"adm_fld_moveup_{current_name}"),
+            InlineKeyboardButton("⬇️ Move Down", callback_data=f"adm_fld_movedown_{current_name}")
         ]
         keyboard.append(move_row)
+
+        nest_row = []
+        if len(segments) > 1:
+            nest_row.append(InlineKeyboardButton("⬅️ Move Out (Parent)", callback_data=f"adm_fld_mleft_{current_name}"))
+        if len(siblings) > 1:
+            nest_row.append(InlineKeyboardButton("➡️ Move In (Sub-Folder)", callback_data=f"adm_fld_mright_{current_name}"))
+        if nest_row:
+            keyboard.append(nest_row)
 
         is_active = db.is_category_active(clean_path)
         status_toggle_btn = InlineKeyboardButton(f"🔄 Status: {'🟢 Active (ON)' if is_active else '🔴 Inactive (OFF)'}", callback_data=f"adm_fld_togglestatus_{current_name}")
@@ -3783,7 +3833,7 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
         course_list_str = "\n".join([f"  • {'[DISABLED] ' if c.get('status') == 'inactive' else ''}<b>{html.escape(c['name'])}</b> ➔ <code>৳{c.get('price', 0)}</code>" for c in courses]) if courses else "  <i>(এই ফোল্ডারে এখনো কোনো কোর্স নেই)</i>"
 
         msg = f"""<blockquote>📁 <b>[ Directory: <code>{path_display}</code> ]</b>
-📌 <b>Visibility / Status:</b> {status_display}</blockquote>
+📌 <b>Visibility / Status:</b> {status_display}{cur_pos_str}</blockquote>
 
 <blockquote>📂 <b>Sub-Folders ({len(subfolders)}):</b>
 {sub_list_str}</blockquote>
@@ -5678,12 +5728,12 @@ Here is the status of your bot's automated messages & buttons:
             return
 
         st_text = "Active 🟢" if m.get("status") == "active" else "Inactive 🔴"
-        msg = f"""💳 **{m['name']} Settings**
+        msg = f"""💳 <b>{html.escape(m['name'])} Settings</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-📱 **Number:** `{m['number']}`
-⚙ **Instruction:** {m.get('instruction', 'Personal')}
-📌 **Status:** {st_text}
+📱 <b>Number:</b> <code>{html.escape(m['number'])}</code>
+⚙ <b>Instruction:</b> {html.escape(m.get('instruction', 'Personal'))}
+📌 <b>Status:</b> {st_text}
 
 Select an action:"""
 
@@ -5692,7 +5742,7 @@ Select an action:"""
             [InlineKeyboardButton("🔄 Toggle Status", callback_data=f"adm_pedit_{pkey}_toggle"), InlineKeyboardButton("✕ Delete Method", callback_data=f"adm_pedit_{pkey}_del")],
             [InlineKeyboardButton("« Payment Settings", callback_data="adm_payments")]
         ]
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("adm_pedit_"):
         rest = data.replace("adm_pedit_", "", 1)
@@ -5705,12 +5755,12 @@ Select an action:"""
             await query.answer("Status updated!")
             m = db.get_payment_method(pkey)
             st_text = "Active 🟢" if m.get("status") == "active" else "Inactive 🔴"
-            msg = f"""💳 **{m['name']} Settings**
+            msg = f"""💳 <b>{html.escape(m['name'])} Settings</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-📱 **Number:** `{m['number']}`
-⚙ **Instruction:** {m.get('instruction', 'Personal')}
-📌 **Status:** {st_text}
+📱 <b>Number:</b> <code>{html.escape(m['number'])}</code>
+⚙ <b>Instruction:</b> {html.escape(m.get('instruction', 'Personal'))}
+📌 <b>Status:</b> {st_text}
 
 Select an action:"""
             keyboard = [
@@ -5718,53 +5768,55 @@ Select an action:"""
                 [InlineKeyboardButton("🔄 Toggle Status", callback_data=f"adm_pedit_{pkey}_toggle"), InlineKeyboardButton("✕ Delete Method", callback_data=f"adm_pedit_{pkey}_del")],
                 [InlineKeyboardButton("« Payment Settings", callback_data="adm_payments")]
             ]
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
         elif action == "del":
             db.delete_payment_method(pkey)
             await query.answer("Payment method deleted!", show_alert=True)
             methods = db.get_payment_methods()
             note = db.get_payment_note()
-            msg = f"""⚙ **Payment Settings Management**
+            msg = f"""⚙ <b>Payment Settings Management</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-📋 **Active Payment Methods ({len(methods)}):**"""
+📋 <b>Active Payment Methods ({len(methods)}):</b>"""
             keyboard = []
             for item in methods:
                 st_icon = "🟢" if item.get("status") == "active" else "🔴"
-                msg += f"\n• {st_icon} **{item['name']}:** `{item['number']}`"
+                msg += f"\n• {st_icon} <b>{html.escape(item['name'])}:</b> <code>{html.escape(item['number'])}</code>"
                 keyboard.append([InlineKeyboardButton(f"⚙ Manage: {item['name']} ({item['number']})", callback_data=f"adm_paym_{item['key']}")])
             keyboard.append([InlineKeyboardButton("➕ Add Payment Method", callback_data="adm_add_paym")])
             keyboard.append([InlineKeyboardButton("📝 Edit Payment Notes", callback_data="adm_edit_paynote"), InlineKeyboardButton("🗑️ Clear Note", callback_data="adm_del_paynote")])
             keyboard.append([InlineKeyboardButton("« Admin Menu", callback_data="adm_main")])
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
         elif action == "num":
             context.user_data["admin_pay_step"] = "edit_num"
             context.user_data["admin_pay_target_key"] = pkey
-            await query.edit_message_text(f"📱 **Enter new number for {pkey.title()}:**\n\n(Type /cancel to abort)")
+            await query.edit_message_text(f"📱 <b>Enter new number for {html.escape(pkey.title())}:</b>\n\n(Type /cancel to abort)", parse_mode="HTML")
 
         elif action == "ins":
             context.user_data["admin_pay_step"] = "edit_ins"
             context.user_data["admin_pay_target_key"] = pkey
-            await query.edit_message_text(f"⚙ **Enter new instruction for {pkey.title()} (e.g. Personal / Agent / Merchant):**\n\n(Type /cancel to abort)")
+            await query.edit_message_text(f"⚙ <b>Enter new instruction for {html.escape(pkey.title())} (e.g. Personal / Agent / Merchant):</b>\n\n(Type /cancel to abort)", parse_mode="HTML")
 
     elif data == "adm_add_paym":
         context.user_data["admin_pay_step"] = "add_name"
         context.user_data["new_pay_method"] = {}
-        await query.edit_message_text("💳 **Enter Payment Method Name (e.g. Upay or City Bank):**\n\n(Type /cancel to abort)")
+        await query.edit_message_text("💳 <b>Enter Payment Method Name (e.g. Upay or City Bank):</b>\n\n(Type /cancel to abort)", parse_mode="HTML")
 
     elif data == "adm_edit_paynote":
         context.user_data["admin_pay_step"] = "edit_note"
+        cur_note = db.get_payment_note()
         await query.edit_message_text(
-            f"""📝 **Edit Payment Disclaimer / Notes:**
+            f"""📝 <b>Edit Payment Disclaimer / Notes:</b>
 ━━━━━━━━━━━━━━━━━━━━━
 
 Current Note:
-_{db.get_payment_note()}_
+<blockquote>{html.escape(cur_note) if cur_note else '<i>(None)</i>'}</blockquote>
 
-👇 **Send the new payment disclaimer note:**
-(Type /cancel to abort)"""
+👇 <b>Send the new payment disclaimer note:</b>
+(Type /cancel to abort)""",
+            parse_mode="HTML"
         )
 
     elif data == "adm_del_paynote":
@@ -5772,19 +5824,19 @@ _{db.get_payment_note()}_
         await query.answer("🗑️ Payment note cleared!", show_alert=True)
         methods = db.get_payment_methods()
         note = db.get_payment_note()
-        msg = f"""⚙ **Payment Settings Management**
+        msg = f"""⚙ <b>Payment Settings Management</b>
 ━━━━━━━━━━━━━━━━━━━━━
 
-📋 **Active Payment Methods ({len(methods)}):**"""
+📋 <b>Active Payment Methods ({len(methods)}):</b>"""
         keyboard = []
         for item in methods:
             st_icon = "🟢" if item.get("status") == "active" else "🔴"
-            msg += f"\n• {st_icon} **{item['name']}:** `{item['number']}` ({item.get('instruction', 'Personal')})"
+            msg += f"\n• {st_icon} <b>{html.escape(item['name'])}:</b> <code>{html.escape(item['number'])}</code>"
             keyboard.append([InlineKeyboardButton(f"⚙ Manage: {item['name']} ({item['number']})", callback_data=f"adm_paym_{item['key']}")])
         keyboard.append([InlineKeyboardButton("➕ Add Payment Method", callback_data="adm_add_paym")])
         keyboard.append([InlineKeyboardButton("📝 Edit Payment Notes", callback_data="adm_edit_paynote"), InlineKeyboardButton("🗑️ Clear Note", callback_data="adm_del_paynote")])
         keyboard.append([InlineKeyboardButton("« Admin Menu", callback_data="adm_main")])
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     # ==================== USER MANAGEMENT ====================
     # ==================== USER & ADMIN MANAGEMENT ====================
@@ -6639,10 +6691,35 @@ Choose how you want to broadcast:
         parent_path = " > ".join(segments[:-1]) if len(segments) > 1 else ""
         success = db.move_folder_order(parent_path, folder_name, direction)
         if success:
-            await query.answer(f"✅ Moved {direction}!", show_alert=True)
+            siblings = db.get_sub_folders(parent_path, include_inactive=True)
+            pos = siblings.index(folder_name) + 1 if folder_name in siblings else "?"
+            await query.answer(f"✅ '{folder_name}' moved {direction}! (Position: #{pos} of {len(siblings)})", show_alert=True)
         else:
-            await query.answer(f"Cannot move {direction}!", show_alert=True)
+            await query.answer(f"⚠️ '{folder_name}' is already at the {'top' if direction == 'up' else 'bottom'}!", show_alert=True)
         await render_admin_folder_directory(query, context, active_dir)
+
+    elif data.startswith("adm_fld_reorder_"):
+        p_path = data.replace("adm_fld_reorder_", "")
+        context.user_data["reorder_parent_path"] = p_path
+        await render_category_reorder_panel(query, context, p_path)
+        return
+
+    elif data.startswith("adm_fld_reord_"):
+        parts = data.replace("adm_fld_reord_", "").split("_")
+        action = parts[0]
+        idx = int(parts[1])
+        p_path = context.user_data.get("reorder_parent_path", "")
+        folders = db.get_sub_folders(p_path, include_inactive=True)
+        if 0 <= idx < len(folders):
+            f_name = folders[idx]
+            direction = "up" if action == "up" else "down"
+            ok = db.move_folder_order(p_path, f_name, direction)
+            if ok:
+                await query.answer(f"✅ '{f_name}' moved {direction}!")
+            else:
+                await query.answer(f"⚠️ Cannot move {direction} further!")
+        await render_category_reorder_panel(query, context, p_path)
+        return
 
     elif data.startswith("adm_fld_mleft_"):
         active_dir = context.user_data.get("active_dir", "")
@@ -6687,8 +6764,8 @@ Choose how you want to broadcast:
         keyboard.append([InlineKeyboardButton("« Cancel", callback_data=f"adm_dir_{active_dir}")])
         
         await query.edit_message_text(
-            f"➡️ **Select a sibling folder to move '{current_name}' into:**",
-            parse_mode="Markdown",
+            f"➡️ <b>Select a sibling folder to move '{html.escape(current_name)}' into:</b>",
+            parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
@@ -6714,29 +6791,6 @@ Choose how you want to broadcast:
             await render_admin_folder_directory(query, context, parent_path)
         else:
             await query.answer("❌ Move failed!", show_alert=True)
-
-    elif data.startswith("adm_fld_moveup") or data.startswith("adm_fld_movedown"):
-        direction = "up" if "moveup" in data else "down"
-        active_dir = context.user_data.get("active_dir", "")
-        segments = [s.strip() for s in active_dir.split(">") if s.strip()]
-        if len(segments) > 1:
-            await query.answer("Select a category first!", show_alert=True)
-            return
-        subfolders = db.get_sub_folders("")
-        if not subfolders:
-            await query.answer("No categories to move!", show_alert=True)
-            return
-        parent_path = ""
-        folder_name = subfolders[0] if subfolders else ""
-        if not folder_name:
-            await query.answer("No category selected!", show_alert=True)
-            return
-        success = db.move_folder_order(parent_path, folder_name, direction)
-        if success:
-            await query.answer(f"✅ Moved {direction}!", show_alert=True)
-        else:
-            await query.answer(f"Cannot move {direction}!", show_alert=True)
-        await render_admin_folder_directory(query, context, "")
 
     elif data.startswith("adm_fld_rename_"):
         folder_name = data.replace("adm_fld_rename_", "")

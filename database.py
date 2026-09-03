@@ -456,13 +456,13 @@ class Database:
         referrers.sort(key=lambda x: (x.get("referral_count", 0), x.get("balance", 0), len(x.get("referred_users", []))), reverse=True)
         return referrers
 
-    def get_paginated_referrers(self, page: int = 1, per_page: int = 8) -> Tuple[List[dict], int]:
+    def get_paginated_referrers(self, page: int = 1, per_page: int = 8) -> Tuple[List[dict], int, int]:
         all_refs = self.get_all_referrers_list()
         total = len(all_refs)
         total_pages = max(1, (total + per_page - 1) // per_page)
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
-        return all_refs[start_idx:end_idx], total_pages
+        return all_refs[start_idx:end_idx], total_pages, total
 
     def search_referral_users(self, query: str) -> List[dict]:
         q = query.strip().lower()
@@ -1397,19 +1397,26 @@ class Database:
             return False
 
         if not clean_parent:
-            keys = list(self.categories.keys())
-            if clean_name not in keys:
+            roots = [k for k in self.categories.keys() if " > " not in k]
+            if clean_name not in roots:
                 return False
-            idx = keys.index(clean_name)
+            idx = roots.index(clean_name)
             if direction == "up" and idx > 0:
-                keys[idx], keys[idx-1] = keys[idx-1], keys[idx]
-            elif direction == "down" and idx < len(keys) - 1:
-                keys[idx], keys[idx+1] = keys[idx+1], keys[idx]
+                target_idx = idx - 1
+            elif direction == "down" and idx < len(roots) - 1:
+                target_idx = idx + 1
             else:
                 return False
+
+            roots[idx], roots[target_idx] = roots[target_idx], roots[idx]
             new_cats = {}
-            for k in keys:
-                new_cats[k] = self.categories[k]
+            for r in roots:
+                for k, v in self.categories.items():
+                    if k == r or k.startswith(f"{r} > "):
+                        new_cats[k] = v
+            for k, v in self.categories.items():
+                if k not in new_cats:
+                    new_cats[k] = v
             self.categories = new_cats
             self._save_raw(self.categories, CATEGORIES_DB)
             return True
