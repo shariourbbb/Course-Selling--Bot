@@ -4,9 +4,8 @@
   "welcome_message": "👋 আসসালামু আলাইকুম,\n\n🎓 StudyMart-এ আপনাকে স্বাগতম।\n\nStudyMart একটি সম্পূর্ণ অটোমেটেড কোর্স প্ল্যাটফর্ম, যেখানে আপনি সহজেই আপনার পছন্দের কোর্স খুঁজে, ক্রয় করে এবং তাৎক্ষণিকভাবে অ্যাক্সেস করতে পারবেন।\n\n📚 শুরু করতে নিচের কিবোর্ড থেকে আপনার Batch নির্বাচন করুন।\n/start",
   "delivery_message": "🎉 **Your Course Purchase was Successful!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **Order ID:** `{order_id}`\n**Course:** {course_name}\n💰 **Amount:** {amount} ৳\n\n✅ **Payment completed successfully.**\n\n👇 Click the button below to join your course:\n{access_text}",
   "fallback_message": "🔍 **'{query}' সম্পর্কিত কোনো কোর্স বা ই-বুক খুঁজে পাওয়া যায়নি।**\n\n💡 আপনি চাইলে সরাসরি নিচের বাটন থেকে সকল ক্যাটাগরি ও ক্লাস ব্রাউজ করতে পারেন:",
-  "info_message": "HELLLLLLLL😀",
   "bot_description": "🎓 StudyMart-এ আপনাকে স্বাগতম!\n\nআপনার বিশ্বস্ত অটোমেটেড কোর্স প্ল্যাটফর্ম।\n\n📖 SSC • 📚 HSC • 🎯 Admission • 💼 Skills\n\n💳 নিরাপদ পেমেন্ট\n⚡ তাত্ক্ষণিক কোর্স অ্যাক্সেস\n🤖 সম্পূর্ণ অটোমেটেড",
-  "support_message": "➥ **Contact Support / হেল্পলাইন**\n━━━━━━━━━━━━━━━━━━━━\n\nযেকোনো কোর্স সংক্রান্ত তথ্য, পেমেন্ট হেল্প বা সমস্যার জন্য আমাদের সাপোর্ট টিমের সাথে যোগাযোগ করুন:\n\n👨‍💻 **Admin Support:** @StudyMartAdmin\n📢 **Official Channel:** @studymart0_bot\n⏰ **সাপোর্ট সময়:** সকাল ৯:০০ টা - রাত ১২:০০ টা\n\n💡 আপনার কোনো সমস্যা থাকলে এডমিনের ইনবক্সে সরাসরি মেসেজ দিন。",
+  "support_message": "fgdhhhhhhhhhhhhhhhhhh",
   "home_keyboard_grid": [
     [
       {
@@ -154,9 +153,9 @@
     "items": {
       "contact": {
         "label": "💬 Contact Support",
-        "enabled": false,
+        "enabled": true,
         "type": "contact",
-        "content": ""
+        "content": "fgdhhhhhhhhhhhhhhhhhh"
       },
       "how_to_buy": {
         "label": "📖 How to Buy",
@@ -178,5 +177,6 @@
       }
     },
     "custom_buttons": []
-  }
+  },
+  "info_message": "GH"
 }

@@ -474,8 +474,8 @@ async def show_subcategories(query, category: str):
     # Direct courses in root category (if any)
     direct_courses = db.get_courses_by_folder(category, include_inactive=show_inactive)
     for course in direct_courses:
-        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
-        is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " 🆓"
+        is_bought = " ✅" if db.is_purchased(user_id, course["id"]) else ""
         status_tag = "🔴 " if (course.get("status") == "inactive" and show_inactive) else ""
         keyboard.append([
             InlineKeyboardButton(
@@ -1471,9 +1471,10 @@ async def auto_search_courses(update: Update, query: str):
 
     keyboard = []
     for course in results[:10]:
-        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
+        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " 🆓"
+        is_bought = " ✅" if db.is_purchased(user_id, course["id"]) else ""
         keyboard.append([
-            InlineKeyboardButton(f"{course['name']}{price_tag}", callback_data=f"course_{course['id']}")
+            InlineKeyboardButton(f"{course['name']}{price_tag}{is_bought}", callback_data=f"course_{course['id']}")
         ])
 
     keyboard.append([InlineKeyboardButton("❖ All Categories", callback_data="browse_categories")])
@@ -1711,8 +1712,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_courses = db.get_courses_by_filter(include_inactive=show_inactive)
             keyboard = []
             for course in all_courses:
-                price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
-                is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+                price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " 🆓"
+                is_bought = " ✅" if db.is_purchased(user_id, course["id"]) else ""
                 status_tag = "🔴 " if (course.get("status") == "inactive" and show_inactive) else ""
                 keyboard.append([
                     InlineKeyboardButton(
@@ -1766,8 +1767,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Direct courses in this exact folder (e.g. FT EBI 4.0 in HSC 28 > Academy Program)
                 direct_courses = db.get_courses_by_folder(nested_path, include_inactive=is_admin(user_id))
                 for course in direct_courses:
-                    price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
-                    is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+                    price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " 🆓"
+                    is_bought = " ✅" if db.is_purchased(user_id, course["id"]) else ""
                     status_tag = "🔴 " if (course.get("status") == "inactive" and is_admin(user_id)) else ""
                     keyboard.append([
                         InlineKeyboardButton(
@@ -1822,8 +1823,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg_text = f"❌ দুঃখিত, **{category} ➡️ {sub_title}** এ বর্তমানে কোনো কোর্স পাওয়া যায়নি।"
         else:
             for course in courses:
-                price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
-                is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+                price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " 🆓"
+                is_bought = " ✅" if db.is_purchased(user_id, course["id"]) else ""
                 status_tag = "🔴 " if (course.get("status") == "inactive" and is_admin(user_id)) else ""
                 keyboard.append([
                     InlineKeyboardButton(
@@ -3076,8 +3077,8 @@ async def show_subcategories_message(update: Update, category: str):
     # Direct courses in root category (if any)
     direct_courses = db.get_courses_by_folder(category, include_inactive=show_inactive)
     for course in direct_courses:
-        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
-        is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " 🆓"
+        is_bought = " ✅" if db.is_purchased(user_id, course["id"]) else ""
         status_tag = "🔴 " if (course.get("status") == "inactive" and show_inactive) else ""
         keyboard.append([
             InlineKeyboardButton(
@@ -3591,20 +3592,14 @@ def get_admin_dashboard_keyboard(user_id: int) -> InlineKeyboardMarkup:
     if r5:
         keyboard.append(r5)
 
-    # Row 6: Settings
+    # Row 6: Settings & Keyboards
     if db.has_permission(user_id, "bot_settings"):
         keyboard.append([
-            InlineKeyboardButton("⚙️ Keyboard Settings", callback_data="adm_keyboard_settings"),
-            InlineKeyboardButton("ℹ️ Info Button Settings", callback_data="adm_info_buttons")
+            InlineKeyboardButton("⚙️ Bot Settings", callback_data="adm_bot_settings"),
+            InlineKeyboardButton("⚙️ Keyboard Settings", callback_data="adm_keyboard_settings")
         ])
         keyboard.append([
-            InlineKeyboardButton("⚙️ Bot Settings", callback_data="adm_bot_settings")
-        ])
-
-    # Row 7: Maintenance
-    if db.has_permission(user_id, "bot_settings"):
-        keyboard.append([
-            InlineKeyboardButton(f"🛠️ Maint: {'ON 🟢' if db.get_setting('maintenance_mode') == True else 'OFF 🔴'}", callback_data="adm_toggle_maintenance")
+            InlineKeyboardButton(f"🛠️ Maintenance: {'ON 🟢' if db.get_setting('maintenance_mode') == True else 'OFF 🔴'}", callback_data="adm_toggle_maintenance")
         ])
 
     return InlineKeyboardMarkup(keyboard)
@@ -5445,15 +5440,14 @@ Here is the status of your bot's automated messages & buttons:
             ],
             [
                 InlineKeyboardButton("🔄 Fallback Msg", callback_data="adm_editmsg_fallback_message"),
-                InlineKeyboardButton("ℹ️ Info/Help Msg", callback_data="adm_editmsg_info_message")
+                InlineKeyboardButton("💬 Support Msg", callback_data="adm_editmsg_support_message")
             ],
             [
-                InlineKeyboardButton("💬 Support Msg", callback_data="adm_editmsg_support_message"),
-                InlineKeyboardButton("🏡 Home Buttons Settings", callback_data="adm_home_buttons")
+                InlineKeyboardButton("🏡 Home Buttons Settings", callback_data="adm_home_buttons"),
+                InlineKeyboardButton("ℹ️ Info Button Settings", callback_data="adm_info_buttons")
             ],
             [
-                InlineKeyboardButton("ℹ️ Info Button Settings", callback_data="adm_info_buttons"),
-                InlineKeyboardButton("« Admin Menu", callback_data="adm_main")
+                InlineKeyboardButton("« Back to Admin Menu", callback_data="adm_main")
             ]
         ]
 
@@ -5585,7 +5579,12 @@ Here is the status of your bot's automated messages & buttons:
         else:
             preview = "📝 <b>Current:</b> <i>(Using default message)</i>"
 
-        cancel_data = "adm_editmsg_delivery_message" if msg_key.startswith("delivery_") else "adm_bot_settings"
+        if msg_key == "info_message":
+            cancel_data = "adm_info_buttons"
+        elif msg_key.startswith("delivery_"):
+            cancel_data = "adm_editmsg_delivery_message"
+        else:
+            cancel_data = "adm_bot_settings"
         edit_kb = [
             [
                 InlineKeyboardButton("« Cancel", callback_data=cancel_data)
@@ -5619,11 +5618,29 @@ Here is the status of your bot's automated messages & buttons:
         await query.answer(f"✅ Reset {display_key} to default!", show_alert=True)
         
         # Re-render bot settings or delivery settings
-        if msg_key.startswith("delivery_"):
-            query.data = "adm_editmsg_delivery_message"
+        class FakeCallbackQuery:
+            def __init__(self, message, data, user):
+                self.message = message
+                self.data = data
+                self.from_user = user
+                self.id = "0"
+            async def answer(self, text=None, show_alert=False): pass
+            async def edit_message_text(self, text, *args, **kwargs):
+                return await self.message.reply_text(text, *args, **kwargs)
+        if msg_key == "info_message":
+            fake_data = "adm_info_buttons"
+        elif msg_key.startswith("delivery_"):
+            fake_data = "adm_editmsg_delivery_message"
         else:
-            query.data = "adm_bot_settings"
-        await handle_callback(update, context)
+            fake_data = "adm_bot_settings"
+        fake_query = FakeCallbackQuery(query.message, fake_data, query.from_user)
+        class FakeUpdate:
+            def __init__(self, message, callback_query):
+                self.message = message
+                self.callback_query = callback_query
+                self.effective_user = callback_query.from_user
+                self.effective_chat = message.chat
+        await handle_admin_callback(FakeUpdate(query.message, fake_query), context)
         return
 
     # ==================== PAYMENT SETTINGS ====================
