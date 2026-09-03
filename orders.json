@@ -23,7 +23,7 @@
     "courses": [
       "COURSE-1788158992"
     ],
-    "course_name": "📘 26 ACS VARSITY+GST",
+    "course_name": "26 ACS VARSITY+GST",
     "amount": 200,
     "payment_method": "bKash",
     "trxid": "2323233",
@@ -40,7 +40,7 @@
     "courses": [
       "COURSE-1788158992"
     ],
-    "course_name": "📘 26 ACS VARSITY+GST",
+    "course_name": "26 ACS VARSITY+GST",
     "amount": 200,
     "payment_method": "bKash",
     "trxid": "FHJV BVBC",
@@ -57,7 +57,7 @@
     "courses": [
       "COURSE-1788169721"
     ],
-    "course_name": "📘 ACS Medical Batch 2026",
+    "course_name": "ACS Medical Batch 2026",
     "amount": 200,
     "payment_method": "bKash",
     "trxid": "VCBVCBVN",
@@ -97,7 +97,7 @@
     "payment_method": "bKash",
     "trxid": "DHV11POJ1V",
     "coupon_code": "D10",
-    "status": "pending",
+    "status": "rejected",
     "date": "2026-09-01 01:04:23.215007",
     "checkout_type": "single"
   },
@@ -109,7 +109,7 @@
     "courses": [
       "COURSE-1788158992"
     ],
-    "course_name": "📘 26 ACS VARSITY+GST",
+    "course_name": "26 ACS VARSITY+GST",
     "amount": 200,
     "payment_method": "bKash",
     "trxid": "DHV11POJ1V",
@@ -126,7 +126,7 @@
     "courses": [
       "COURSE-1788158992"
     ],
-    "course_name": "📘 26 ACS VARSITY+GST",
+    "course_name": "26 ACS VARSITY+GST",
     "amount": 180,
     "payment_method": "bKash",
     "trxid": "362",
@@ -143,13 +143,104 @@
     "courses": [
       "COURSE-1788169721"
     ],
-    "course_name": "📘 ACS Medical Batch 2026",
+    "course_name": "ACS Medical Batch 2026",
     "amount": 200,
     "payment_method": "bKash",
     "trxid": "11111111",
     "coupon_code": "",
     "status": "rejected",
     "date": "2026-09-01 17:06:23.000535",
+    "checkout_type": "single"
+  },
+  "ORD-1010": {
+    "user_id": 7135525721,
+    "username": "salman2ss",
+    "full_name": "Salman",
+    "course_id": "COURSE-1788283515",
+    "courses": [
+      "COURSE-1788283515"
+    ],
+    "course_name": "📙RMH Chemistry 1st paper | HSC-28",
+    "amount": 150,
+    "payment_method": "bKash",
+    "trxid": "নব্বব্বব্বব্বব্বব",
+    "coupon_code": "",
+    "status": "approved",
+    "date": "2026-09-02 00:49:54.868893",
+    "checkout_type": "single"
+  },
+  "ORD-1011": {
+    "user_id": 8319458917,
+    "username": "",
+    "full_name": "Infinity",
+    "course_id": "COURSE-1788169721",
+    "courses": [
+      "COURSE-1788169721"
+    ],
+    "course_name": "ACS Medical Batch 2026",
+    "amount": 140,
+    "payment_method": "bKash",
+    "trxid": "BNBBBBBBBBBU",
+    "coupon_code": "D30",
+    "status": "approved",
+    "date": "2026-09-02 11:29:24.764140",
+    "checkout_type": "single"
+  },
+  "TEST-ORD-01": {
+    "user_id": 999123456,
+    "amount": 150,
+    "wallet_deducted": 50,
+    "status": "rejected"
+  },
+  "ORD-1012": {
+    "user_id": 7439866781,
+    "username": "Richemanak",
+    "full_name": ")D Ri",
+    "course_id": "COURSE-1788413022",
+    "courses": [
+      "COURSE-1788413022"
+    ],
+    "course_name": "📘 ACS Academy Science | SSC'27",
+    "amount": 200,
+    "payment_method": "bKash",
+    "trxid": "2121",
+    "coupon_code": "",
+    "status": "approved",
+    "date": "2026-09-03 11:24:38.598257",
+    "checkout_type": "single"
+  },
+  "ORD-1013": {
+    "user_id": 1852477596,
+    "username": "ShariourAhmed",
+    "full_name": "{_Shariour Ahamed_}@",
+    "course_id": "COURSE-1788413022",
+    "courses": [
+      "COURSE-1788413022"
+    ],
+    "course_name": "ACS Academy Science | SSC'27",
+    "amount": 200,
+    "payment_method": "bKash",
+    "trxid": "100",
+    "coupon_code": "",
+    "status": "approved",
+    "date": "2026-09-03 12:04:24.473742",
+    "checkout_type": "single"
+  },
+  "ORD-1014": {
+    "user_id": 7192726551,
+    "username": "bdwin00",
+    "full_name": "DK WIN BD",
+    "course_id": "COURSE-1788192212",
+    "courses": [
+      "COURSE-1788192212"
+    ],
+    "course_name": "Cps combo",
+    "amount": 300,
+    "payment_method": "bKash",
+    "trxid": "SA",
+    "coupon_code": "",
+    "status": "approved",
+    "date": "2026-09-03 12:24:20.406530",
     "checkout_type": "single"
   }
 }

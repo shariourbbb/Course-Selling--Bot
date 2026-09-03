@@ -2,9 +2,9 @@
   "maintenance_mode": false,
   "maintenance_message": "bot off monday",
   "welcome_message": "👋 আসসালামু আলাইকুম,\n\n🎓 StudyMart-এ আপনাকে স্বাগতম।\n\nStudyMart একটি সম্পূর্ণ অটোমেটেড কোর্স প্ল্যাটফর্ম, যেখানে আপনি সহজেই আপনার পছন্দের কোর্স খুঁজে, ক্রয় করে এবং তাৎক্ষণিকভাবে অ্যাক্সেস করতে পারবেন।\n\n📚 শুরু করতে নিচের কিবোর্ড থেকে আপনার Batch নির্বাচন করুন।\n/start",
-  "delivery_message": "🎉 **আলহামদুলিল্লাহ! আপনার পেমেন্ট অনুমোদিত হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **অর্ডার আইডি:** `{order_id}`\n📖 **কোর্স:** {course_name}\n💰 **টাকা:** {amount} ৳\n\n🎁 **আপনার কোর্সের লিংক ও অ্যাক্সেস:**\n{access_text}\n\n✨ যেকোনো সময় এই লিংক দেখতে বটে '✦ আমার কোর্সসমূহ' বাটনে ক্লিক করুন। শুভকামনা!",
+  "delivery_message": "🎉 **Your Course Purchase was Successful!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **Order ID:** `{order_id}`\n**Course:** {course_name}\n💰 **Amount:** {amount} ৳\n\n✅ **Payment completed successfully.**\n\n👇 Click the button below to join your course:\n{access_text}",
   "fallback_message": "🔍 **'{query}' সম্পর্কিত কোনো কোর্স বা ই-বুক খুঁজে পাওয়া যায়নি।**\n\n💡 আপনি চাইলে সরাসরি নিচের বাটন থেকে সকল ক্যাটাগরি ও ক্লাস ব্রাউজ করতে পারেন:",
-  "info_message": "about",
+  "info_message": "HELLLLLLLL😀",
   "bot_description": "🎓 StudyMart-এ আপনাকে স্বাগতম!\n\nআপনার বিশ্বস্ত অটোমেটেড কোর্স প্ল্যাটফর্ম।\n\n📖 SSC • 📚 HSC • 🎯 Admission • 💼 Skills\n\n💳 নিরাপদ পেমেন্ট\n⚡ তাত্ক্ষণিক কোর্স অ্যাক্সেস\n🤖 সম্পূর্ণ অটোমেটেড",
   "support_message": "➥ **Contact Support / হেল্পলাইন**\n━━━━━━━━━━━━━━━━━━━━\n\nযেকোনো কোর্স সংক্রান্ত তথ্য, পেমেন্ট হেল্প বা সমস্যার জন্য আমাদের সাপোর্ট টিমের সাথে যোগাযোগ করুন:\n\n👨‍💻 **Admin Support:** @StudyMartAdmin\n📢 **Official Channel:** @studymart0_bot\n⏰ **সাপোর্ট সময়:** সকাল ৯:০০ টা - রাত ১২:০০ টা\n\n💡 আপনার কোনো সমস্যা থাকলে এডমিনের ইনবক্সে সরাসরি মেসেজ দিন。",
   "home_keyboard_grid": [
@@ -50,9 +50,9 @@
       }
     ]
   ],
-  "delivery_free_with_link": "Broadcast message Test",
-  "delivery_paid_with_link": "🎉 আপনার Course Purchase সফল হয়েছে!\n\n📘 ${courseName}\n\n✅ Payment সফলভাবে সম্পন্ন হয়েছে।\n\nনিচের বাটনে ক্লিক করে Course-এ যুক্ত হয়ে যান।",
-  "delivery_paid_no_link": "🎉 আপনার Course Purchase সফল হয়েছে!\n\n📘 ${courseName}\n\n✅ Payment সফলভাবে সম্পন্ন হয়েছে।\n\n⚠️ এই Course-এর Join Link বর্তমানে যুক্ত করা হয়নি।\n\n📩 অনুগ্রহ করে @helpline3012_bot-এ যোগাযোগ করুন।",
+  "delivery_free_with_link": "🎉 **Your Course Access is Confirmed!**\n\n**Course:** {course_name}\n\n👇 Click the button below to join your course:",
+  "delivery_paid_with_link": "🎉 **Your Course Purchase was Successful!**\n\n**Course:** {course_name}\n**Order ID:** `{order_id}`\n\n✅ **Payment completed successfully.**\n\n👇 Click the button below to join your course:",
+  "delivery_paid_no_link": "🎉 **Your Course Purchase was Successful!**\n\n**Course:** {course_name}\n**Order ID:** `{order_id}`\n\n✅ **Payment completed successfully.**\n\n⚠️ Join link is currently not available. Please contact support: @helpline3012_bot",
   "inactive_categories": [
     "TEST_CAT_XYZ > TEST_SUB_123"
   ],
@@ -62,5 +62,121 @@
   "show_view_all_courses": false,
   "show_home_button": false,
   "referral_bonus_amount": 20,
-  "referral_system_enabled": true
+  "referral_system_enabled": true,
+  "inline_buttons_config": {
+    "master_enabled": true,
+    "section_status": {
+      "home": true,
+      "categories": true,
+      "ebooks": true,
+      "support": false,
+      "delivery": true,
+      "profile": true,
+      "global": true
+    },
+    "buttons": [
+      {
+        "id": "ibtn_home_0_0",
+        "text": "📚 Browse Courses",
+        "action": "browse_categories",
+        "target": "home",
+        "enabled": true,
+        "row": 0,
+        "col": 0
+      },
+      {
+        "id": "ibtn_home_0_1",
+        "text": "📖 Browse E-Book",
+        "action": "browse_ebooks",
+        "target": "home",
+        "enabled": true,
+        "row": 0,
+        "col": 1
+      },
+      {
+        "id": "ibtn_home_1_0",
+        "text": "🎓 My Courses",
+        "action": "my_courses_nav",
+        "target": "home",
+        "enabled": false,
+        "row": 1,
+        "col": 0
+      },
+      {
+        "id": "ibtn_home_1_1",
+        "text": "📃 My E-Books",
+        "action": "my_ebooks_nav",
+        "target": "home",
+        "enabled": false,
+        "row": 1,
+        "col": 1
+      },
+      {
+        "id": "ibtn_home_1_2",
+        "text": "💳 How To Buy",
+        "action": "https://t.me/paid_course_hsc/1129",
+        "target": "home",
+        "enabled": true,
+        "row": 2,
+        "col": 0
+      },
+      {
+        "id": "ibtn_home_1_3",
+        "text": "📞Contact Admin",
+        "action": "https://t.me/helpline3012_bot",
+        "target": "home",
+        "enabled": true,
+        "row": 2,
+        "col": 1
+      },
+      {
+        "id": "ibtn_home_2_0",
+        "text": "💬 Support",
+        "action": "https://t.me/StudyMartAdmin",
+        "target": "home",
+        "enabled": false,
+        "row": 3,
+        "col": 0
+      },
+      {
+        "id": "ibtn_1788340068386_7",
+        "text": "DJ Kasem",
+        "action": "https://example.com",
+        "target": "profile",
+        "enabled": true,
+        "row": 0,
+        "col": 0
+      }
+    ]
+  },
+  "info_menu_settings": {
+    "header_text": "Help🤠",
+    "items": {
+      "contact": {
+        "label": "💬 Contact Support",
+        "enabled": false,
+        "type": "contact",
+        "content": ""
+      },
+      "how_to_buy": {
+        "label": "📖 How to Buy",
+        "enabled": true,
+        "type": "text",
+        "content": ""
+      },
+      "about": {
+        "label": "🎓 About StudyMart",
+        "enabled": true,
+        "type": "text",
+        "content": ""
+      },
+      "terms": {
+        "label": "📜 Terms & Policy",
+        "enabled": true,
+        "type": "text",
+        "content": ""
+      }
+    },
+    "custom_buttons": []
+  }
 }

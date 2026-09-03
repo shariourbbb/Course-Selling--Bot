@@ -67,5 +67,31 @@
     "expiry_date": "None",
     "used_count": 0,
     "used_by": {}
+  },
+  "D30": {
+    "code": "D30",
+    "discount_type": "percentage",
+    "discount_value": 30,
+    "discount": 30,
+    "min_purchase": 200,
+    "max_discount": 0,
+    "applicable_category": "All",
+    "applicable_course_id": null,
+    "applicable_course_name": null,
+    "usage_limit": 10000000000000000000000000,
+    "uses": 9999999999999999999999999,
+    "per_user_limit": 1,
+    "first_order_only": false,
+    "status": "active",
+    "enable_referral_reward": false,
+    "reward_user_id": null,
+    "reward_type": "fixed",
+    "reward_amount": 0,
+    "start_date": "2026-09-02",
+    "expiry_date": "None",
+    "used_count": 1,
+    "used_by": {
+      "8319458917": 1
+    }
   }
 }

@@ -360,12 +360,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reward_amt = db.get_referral_reward_amount()
             await context.bot.send_message(
                 valid_ref,
-                f"""🎉 <b>নতুন রেফারেল জয়েন!</b>
+                f"""🎉 <b>New Referral Joined!</b>
 ━━━━━━━━━━━━━━━━━━━━
-👤 <b>শিক্ষার্থী:</b> {html.escape(student_name)}{uname_tag}
+👤 <b>Student:</b> {html.escape(student_name)}{uname_tag}
 🆔 <b>User ID:</b> <code>{user.id}</code>
 
-💡 <i>এই শিক্ষার্থী যখন কোনো পেইড কোর্স ক্রয় করবেন, তখন আপনার অ্যাকাউন্টে ৳{reward_amt} BDT রেফারেল বোনাস যুক্ত হবে।</i>""",
+💡 <i>When this student purchases a paid course, a ৳{reward_amt} BDT referral bonus will be credited to your account.</i>""",
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -471,6 +471,19 @@ async def show_subcategories(query, category: str):
     if row:
         keyboard.append(row)
 
+    # Direct courses in root category (if any)
+    direct_courses = db.get_courses_by_folder(category, include_inactive=show_inactive)
+    for course in direct_courses:
+        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
+        is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+        status_tag = "🔴 " if (course.get("status") == "inactive" and show_inactive) else ""
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{status_tag}{course['name']}{price_tag}{is_bought}",
+                callback_data=f"course_{course['id']}"
+            )
+        ])
+
     # All courses under this category
     if db.is_view_all_courses_enabled():
         all_courses = db.get_courses_by_filter(category=category, include_inactive=show_inactive)
@@ -479,13 +492,15 @@ async def show_subcategories(query, category: str):
     if is_admin(user_id):
         keyboard.append([
             InlineKeyboardButton(f"➕ Add Course", callback_data=f"adm_addcourse_cat_{category}"),
-            InlineKeyboardButton("📁 Manage Folder", callback_data=f"adm_catm_{category}")
+            InlineKeyboardButton("📁 Manage Folder", callback_data=f"adm_dir_{category}")
         ])
 
     keyboard.append([InlineKeyboardButton("◀️ Back", callback_data="back_to_categories")])
 
-    if subcats:
-        text = f"📂 **{category} এর বিষয়/প্রোগ্রাম:**"
+    if subcats and direct_courses:
+        text = f"📂 **{category} এর বিষয় ও কোর্সসমূহ:**"
+    elif direct_courses:
+        text = f"📚 **{category} এর কোর্সসমূহ:**"
     else:
         text = f"📂 **{category} এর বিষয়/প্রোগ্রাম:**"
 
@@ -534,7 +549,7 @@ def format_course_card_html(name: str, price, description: str, discount: Option
         
     desc_display = desc_clean
         
-    return f"""<blockquote>📘 <b>{name_clean}</b></blockquote>
+    return f"""<blockquote><b>{name_clean}</b></blockquote>
 
 <blockquote>💰 <b>Price:</b> {price_str}</blockquote>
 
@@ -751,16 +766,18 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_spent = sum(o.get("amount", 0) for o in orders if o.get("status") == "approved")
     wallet_balance = user_data.get("balance", 0)
 
-    name = user.first_name or 'User'
-    msg = f"""Hi, **{name}** 👋
+    name = html.escape(user.first_name or 'User')
+    username = f"@{html.escape(user.username)}" if user.username else "N/A"
 
-🆔 **User ID:** `{user.id}`
-🔗 **Username:** @{user.username or 'N/A'}
+    msg = f"""Hi, <b>{name}</b> 👋
 
-🎓 **Courses:** {len(purchased_courses)}
-📚 **E-Books:** {len(purchased_ebooks)}
-💰 **Wallet Balance:** ৳{wallet_balance} BDT
-💳 **Total Spent:** ৳{total_spent} BDT"""
+🆔 <b>User ID:</b> <code>{user.id}</code>
+🔗 <b>Username:</b> {username}
+
+🎓 <b>Courses:</b> {len(purchased_courses)}
+📚 <b>E-Books:</b> {len(purchased_ebooks)}
+💰 <b>Wallet Balance:</b> ৳{wallet_balance} BDT
+💳 <b>Total Spent:</b> ৳{total_spent} BDT"""
 
     keyboard = [
         [InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav"), InlineKeyboardButton("📚 My E-Books", callback_data="my_ebooks_nav")],
@@ -780,11 +797,11 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.callback_query.message.delete()
             except Exception:
                 pass
-            await update.callback_query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.callback_query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -793,6 +810,7 @@ async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{user.id}"
     user_data = db.get_user(user.id) or {}
     ref_count = user_data.get("referral_count", 0)
+    ref_balance = user_data.get("balance", 0)
     bonus_amount = db.get_referral_reward_amount()
     is_enabled = db.is_referral_enabled()
 
@@ -801,25 +819,25 @@ async def show_referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ref_nav_row.append(InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu"))
 
     if not is_enabled:
-        msg = """🎁 <b>রেফার ও ইনকাম (Refer & Earn)</b>
+        msg = """🎁 <b>Refer & Earn</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-⚠️ <i>রেফারেল ও রিওয়ার্ড প্রোগ্রামটি বর্তমানে সাময়িকভাবে স্থগিত রয়েছে। এডমিন এটি পুনরায় চালু করলে আপনি রেফারেল বোনাস উপভোগ করতে পারবেন।</i>"""
+⚠️ <i>The referral program is currently suspended. Please check back later.</i>"""
         keyboard = [ref_nav_row]
     else:
-        msg = f"""🎁 <b>রেফার ও ইনকাম (Refer & Earn)</b>
+        msg = f"""🎁 <b>Refer & Earn</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-বন্ধুদের সাথে শেয়ার করুন এবং আপনার লিংকের মাধ্যমে কেউ পেইড কোর্স কিনলেই পেয়ে যান প্রতি রেফারে <b>৳{bonus_amount} BDT</b> বোনাস!
+Share your referral link with friends. When someone purchases a course using your link, you will earn a <b>৳{bonus_amount} BDT</b> bonus!
 
-👥 <b>সফল পেইড রেফারেল:</b> <code>{ref_count}</code> জন
-💰 <b>প্রতি রেফারে বোনাস:</b> <code>৳{bonus_amount} BDT</code>
+👥 <b>Successful Referrals:</b> <code>{ref_count}</code>
+💰 <b>Referral Balance:</b> <code>৳{ref_balance} BDT</code>
 
-🔗 <b>আপনার রেফারেল লিংক:</b>
+🔗 <b>Your Referral Link:</b>
 <code>{ref_link}</code>"""
 
         keyboard = [
-            [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={ref_link}&text=StudyMart - Best Academic & Admission Courses:")],
+            [InlineKeyboardButton("📤 Share Link", url=f"https://t.me/share/url?url={ref_link}&text=StudyMart - Best Courses:")],
             ref_nav_row
         ]
 
@@ -975,9 +993,9 @@ async def show_my_courses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     courses = db.get_user_courses(user_id)
 
     if not courses:
-        msg = """🎓 **আপনার কোনো কোর্স কেনা নেই!**
+        msg = """🎓 <b>No Courses Found!</b>
 
-নতুন কোর্স কিনতে নিচের বাটনে ক্লিক করে কোর্স ব্রাউজ করুন।"""
+You have not enrolled in any courses yet. Click below to browse available courses."""
         keyboard = [
             [InlineKeyboardButton("📚 Browse Courses", callback_data="browse_categories")],
             [InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")]
@@ -988,27 +1006,28 @@ async def show_my_courses(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.callback_query.message.delete()
                 except Exception:
                     pass
-                await update.callback_query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+                await update.callback_query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
             else:
-                await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+                await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    msg = f"🎓 **আপনার সংগৃহীত কোর্সসমূহ ({len(courses)} টি):**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg = f"🎓 <b>My Courses ({len(courses)}):</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
     keyboard = []
 
     for idx, c in enumerate(courses, 1):
-        msg += f"{idx}. 📘 **{c['name']}**\n"
+        c_name = html.escape(c.get('name', 'Course'))
+        msg += f"{idx}. <b>{c_name}</b>\n"
         link = c.get("access_link", "")
         if link:
             dyn_link = await get_dynamic_access_link(context.bot, link, user_id)
             if dyn_link:
-                keyboard.append([InlineKeyboardButton(f"  {c['name'][:18]}", url=dyn_link)])
+                keyboard.append([InlineKeyboardButton(f"{c['name']}", url=dyn_link)])
         else:
-            keyboard.append([InlineKeyboardButton(f"📖 View {c['name'][:18]}", callback_data=f"course_{c['id']}")])
+            keyboard.append([InlineKeyboardButton(f"{c['name']}", callback_data=f"course_{c['id']}")])
 
-    msg += "\n💡 Click above to join class directly."
+    msg += "\n💡 <i>Click the buttons below to access your course.</i>"
     keyboard.append([InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")])
 
     if update.callback_query:
@@ -1017,11 +1036,11 @@ async def show_my_courses(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.callback_query.message.delete()
             except Exception:
                 pass
-            await update.callback_query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.callback_query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-            await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.callback_query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
     else:
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def show_my_ebooks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1035,7 +1054,7 @@ async def show_my_ebooks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if free_ebs:
             msg = f"📚 **ফ্রি ই-বুক ও স্টাডি মেটেরিয়াল ({len(free_ebs)} টি উপলব্ধ):**\n\n"
             for idx, eb in enumerate(free_ebs, 1):
-                msg += f"{idx}. 📘 **{eb['name']}** (Free 🎁)\n"
+                msg += f"{idx}. 📘 **{eb['name']}** (Free)\n"
                 eid = eb.get("id") or list(all_ebs.keys())[idx - 1]
                 if eb.get("file_id"):
                     keyboard.append([InlineKeyboardButton(f"📥 Download {eb['name'][:16]} (PDF)", callback_data=f"ebdl_{eid}")])
@@ -1153,7 +1172,7 @@ async def show_ebooks_by_category(update: Update, context: ContextTypes.DEFAULT_
     for eb in ebooks:
         eid = eb.get("id")
         price = eb.get("price", 0)
-        price_tag = f" (৳{price})" if price > 0 else " (Free 🎁)"
+        price_tag = f" (৳{price})" if price > 0 else " (Free)"
 
         if db.has_user_ebook_access(user_id, eid):
             keyboard.append([InlineKeyboardButton(f"✅ {eb['name']} (সংগৃহীত)", callback_data=f"view_eb_{eid}")])
@@ -1199,7 +1218,7 @@ async def view_ebook_details(update: Update, context: ContextTypes.DEFAULT_TYPE,
 ━━━━━━━━━━━━━━━━━━━━
 
 📂 **ক্যাটাগরি:** `{cat}`
-💰 **মূল্য:** {f"৳{price}" if price > 0 else "বিনামূল্যে (Free 🎁)"}
+💰 **মূল্য:** {f"৳{price}" if price > 0 else "বিনামূল্যে (Free)"}
 
 📝 **বিবরণ:**
 {eb.get('description', 'প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।')}"""
@@ -1316,21 +1335,97 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ==================== INFO & SUPPORT MENU ====================
 
+def get_default_info_content(item_key: str) -> str:
+    if item_key == "contact":
+        return db.get_setting("support_message") or (
+            f"➥ **Contact Support / হেল্পলাইন**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"যেকোনো কোর্স সংক্রান্ত তথ্য, পেমেন্ট হেল্প বা সমস্যার জন্য আমাদের সাপোর্ট টিমের সাথে যোগাযোগ করুন:\n\n"
+            f"👨‍💻 **Admin Support:** @{SUPPORT_USERNAME}\n"
+            f"📢 **Official Channel:** @{BOT_USERNAME}\n"
+            f"⏰ **সাপোর্ট সময়:** সকাল ৯:০০ টা - রাত ১২:০০ টা\n\n"
+            f"💡 আপনার কোনো সমস্যা থাকলে এডমিনের ইনবক্সে সরাসরি মেসেজ দিন।"
+        )
+    elif item_key == "how_to_buy":
+        return (
+            "❖ **How to Buy / কোর্স কেনার নিয়ম**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "আমাদের প্ল্যাটফর্ম থেকে খুব সহজেই যেকোনো কোর্স কিনতে পারবেন। নিচের ধাপগুলো অনুসরণ করুন:\n\n"
+            "1️⃣ **কোর্স নির্বাচন:** \n"
+            "মেনু বা সার্চ থেকে আপনার পছন্দের কোর্সটি সিলেক্ট করুন।\n\n"
+            "2️⃣ **অর্ডার শুরু করুন:** \n"
+            "কোর্সের বিস্তারিত দেখে **'💳 এখনই কিনুন (Buy Now)'** বাটনে চাপ দিন। (কুপন থাকলে আগে কুপন প্রয়োগ করতে পারেন)\n\n"
+            "3️⃣ **পেমেন্ট মেথড নির্বাচন:** \n"
+            "বিকাশ, নগদ বা রকেট এর মধ্যে আপনার সুবিধাজনক মাধ্যম বেছে নিন।\n\n"
+            "4️⃣ **টাকা পাঠান (Send Money):** \n"
+            "প্রদর্শিত নাম্বারে নির্দিষ্ট পরিমাণ টাকা Send Money করুন এবং প্রাপ্ত **TrxID (Transaction ID)** টি কপি করুন।\n\n"
+            "5️⃣ **TrxID সাবমিট:** \n"
+            "TrxID টি বটে সেন্ড করলেই আপনার অর্ডার সাবমিট হয়ে যাবে।\n\n"
+            "6️⃣ **তাৎক্ষণিক অ্যাক্সেস:** \n"
+            "এডমিন ট্রানজেকশন যাচাই করার সাথে সাথেই আপনার ইনবক্সে ক্লাসের প্রাইভেট লিংক ও ম্যাটেরিয়াল চলে আসবে!"
+        )
+    elif item_key == "about":
+        return (
+            f"◈ **About StudyMart**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"**{BOT_NAME}** একটি সম্পূর্ণ আধুনিক এবং নির্ভরযোগ্য অনলাইন শিক্ষা সেবা প্ল্যাটফর্ম।\n\n"
+            f"🎯 **আমাদের ভিশন:**\n"
+            f"বাংলাদেশের যেকোনো প্রান্ত থেকে শিক্ষার্থীরা যাতে দেশের সেরা মেন্টরদের প্রিমিয়াম কোর্স, পূর্ণাঙ্গ লেকচার শিট ও পরীক্ষার প্রস্তুতি স্বল্প খরচে সহজেই গ্রহণ করতে পারে।\n\n"
+            f"✦ **আমাদের ফিচারসমূহ:**\n"
+            f"• লাইফটাইম অ্যাক্সেস সহ ফুল এইচডি ক্লাস\n"
+            f"• প্র্যাকটিস শিট, দাগানো বই ও এক্সক্লুসিভ নোটস\n"
+            f"• দ্রুত পেমেন্ট ভেরিফিকেশন ও অটোমেটিক ডেলিভারি\n"
+            f"• ডেডিকেটেড স্টুডেন্ট সাপোর্ট"
+        )
+    elif item_key == "terms":
+        return (
+            "• **Terms & Policy / নীতিমালা ও শর্তাবলী**\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "১. **কোর্স অ্যাক্সেস:** ক্রয়কৃত কোর্সের ম্যাটেরিয়াল ও লিংকে আপনি ফুল অ্যাক্সেস পাবেন।\n"
+            "২. **পেমেন্ট ভেরিফিকেশন:** ভুল TrxID বা সঠিক টাকার কম পেমেন্ট করলে অর্ডার বাতিল হবে।\n"
+            "৩. **নন-রিফান্ডেবল:** ডিজিটাল কোর্স মেটেরিয়াল ও অ্যাক্সেস লিংক সরবরাহ করার পর তা রিফান্ডযোগ্য নয়।\n"
+            "৪. **কপিরাইট ও শেয়ারিং:** কোর্সের কন্টেন্ট অন্য কোথাও বিক্রয় বা বাণিজ্যিকভাবে শেয়ার করা সম্পূর্ণরূপে নিষিদ্ধ।\n"
+            "৫. **সাপোর্ট:** কোনো সমস্যা হলে সর্বদা আমাদের অফিসিয়াল এডমিনের সাথে যোগাযোগ করবেন।"
+        )
+    return ""
+
+
 def get_info_menu_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("💬 Contact Support", callback_data="info_contact")],
-        [InlineKeyboardButton("📖 How to Buy", callback_data="info_how_to_buy")],
-        [InlineKeyboardButton("🎓 About StudyMart", callback_data="info_about")],
-        [InlineKeyboardButton("📜 Terms & Policy", callback_data="info_terms")]
-    ]
+    cfg = db.get_info_settings()
+    items = cfg.get("items", {})
+    keyboard = []
+
+    for key, callback in [
+        ("contact", "info_contact"),
+        ("how_to_buy", "info_how_to_buy"),
+        ("about", "info_about"),
+        ("terms", "info_terms")
+    ]:
+        if items.get(key, {}).get("enabled", True):
+            label = items.get(key, {}).get("label") or key
+            keyboard.append([InlineKeyboardButton(label, callback_data=callback)])
+
+    for b in cfg.get("custom_buttons", []):
+        if b.get("enabled", True):
+            b_label = b.get("label", "Button")
+            b_type = b.get("type", "url")
+            b_content = b.get("content", "")
+            if b_type == "url" and (b_content.startswith("http://") or b_content.startswith("https://") or b_content.startswith("t.me")):
+                url_dest = b_content if b_content.startswith("http") else f"https://{b_content}"
+                keyboard.append([InlineKeyboardButton(b_label, url=url_dest)])
+            else:
+                keyboard.append([InlineKeyboardButton(b_label, callback_data=f"cinfo_view_{b['id']}")])
+
     if db.is_home_button_enabled():
         keyboard.append([InlineKeyboardButton("⚜️ HOME", callback_data="back_to_main_menu")])
     return InlineKeyboardMarkup(keyboard)
 
 
 async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    raw_text = db.get_setting("info_message", "ℹ **StudyMart Help & Support**\n\nSelect an option below for purchasing guides, general questions, or direct support:")
+    cfg = db.get_info_settings()
+    default_info = "ℹ️ **StudyMart Help & Support**\n━━━━━━━━━━━━━━━━━━━━\n\nSelect an option below for purchasing guides, general questions, or direct support:"
+    raw_text = cfg.get("header_text") or db.get_setting("info_message", default_info)
+    if not raw_text or not str(raw_text).strip():
+        raw_text = default_info
     text, parsed_kb = parse_inline_buttons(raw_text)
+    if not text or not str(text).strip():
+        text = default_info
     reply_markup = InlineKeyboardMarkup(parsed_kb) if parsed_kb else get_info_menu_keyboard()
 
     if update.callback_query:
@@ -1536,89 +1631,76 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(text, parse_mode="Markdown", reply_markup=reply_markup)
 
     elif data == "info_how_to_buy":
-        msg = f"""❖ **How to Buy / কোর্স কেনার নিয়ম**
-━━━━━━━━━━━━━━━━━━━━
-
-আমাদের প্ল্যাটফর্ম থেকে খুব সহজেই যেকোনো কোর্স কিনতে পারবেন। নিচের ধাপগুলো অনুসরণ করুন:
-
-1️⃣ **কোর্স নির্বাচন:** 
-মেনু বা সার্চ থেকে আপনার পছন্দের কোর্সটি সিলেক্ট করুন।
-
-2️⃣ **অর্ডার শুরু করুন:** 
-কোর্সের বিস্তারিত দেখে **'💳 এখনই কিনুন (Buy Now)'** বাটনে চাপ দিন। (কুপন থাকলে আগে কুপন প্রয়োগ করতে পারেন)
-
-3️⃣ **পেমেন্ট মেথড নির্বাচন:** 
-বিকাশ, নগদ বা রকেট এর মধ্যে আপনার সুবিধাজনক মাধ্যম বেছে নিন।
-
-4️⃣ **টাকা পাঠান (Send Money):** 
-প্রদর্শিত নাম্বারে নির্দিষ্ট পরিমাণ টাকা Send Money করুন এবং প্রাপ্ত **TrxID (Transaction ID)** টি কপি করুন।
-
-5️⃣ **TrxID সাবমিট:** 
-TrxID টি বটে সেন্ড করলেই আপনার অর্ডার সাবমিট হয়ে যাবে।
-
-6️⃣ **তাৎক্ষণিক অ্যাক্সেস:** 
-এডমিন ট্রানজেকশন যাচাই করার সাথে সাথেই আপনার ইনবক্সে ক্লাসের প্রাইভেট লিংক ও ম্যাটেরিয়াল চলে আসবে!"""
-        keyboard = [
+        cfg = db.get_info_settings()
+        custom_c = cfg.get("items", {}).get("how_to_buy", {}).get("content", "").strip()
+        raw_msg = custom_c if custom_c else get_default_info_content("how_to_buy")
+        msg, parsed_kb = parse_inline_buttons(raw_msg)
+        default_kb = [
             [InlineKeyboardButton("❖ Browse Courses", callback_data="browse_categories")],
             [InlineKeyboardButton("➥ Contact Admin", url=f"https://t.me/{SUPPORT_USERNAME}")],
             [InlineKeyboardButton("« Back to Info Menu", callback_data="info_menu")]
         ]
+        reply_markup = InlineKeyboardMarkup(parsed_kb) if parsed_kb else InlineKeyboardMarkup(default_kb)
         if query.message.photo:
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=reply_markup)
         else:
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=reply_markup)
 
     elif data == "info_about":
-        msg = f"""◈ **About StudyMart**
-━━━━━━━━━━━━━━━━━━━━
-
-**{BOT_NAME}** একটি সম্পূর্ণ আধুনিক এবং নির্ভরযোগ্য অনলাইন শিক্ষা সেবা প্ল্যাটফর্ম।
-
-🎯 **আমাদের ভিশন:**
-বাংলাদেশের যেকোনো প্রান্ত থেকে শিক্ষার্থীরা যাতে দেশের সেরা মেন্টরদের প্রিমিয়াম কোর্স, পূর্ণাঙ্গ লেকচার শিট ও পরীক্ষার প্রস্তুতি স্বল্প খরচে সহজেই গ্রহণ করতে পারে।
-
-✦ **আমাদের ফিচারসমূহ:**
-• লাইফটাইম অ্যাক্সেস সহ ফুল এইচডি ক্লাস
-• প্র্যাকটিস শিট, দাগানো বই ও এক্সক্লুসিভ নোটস
-• দ্রুত পেমেন্ট ভেরিফিকেশন ও অটোমেটিক ডেলিভারি
-• ডেডিকেটেড স্টুডেন্ট সাপোর্ট"""
-        keyboard = [
+        cfg = db.get_info_settings()
+        custom_c = cfg.get("items", {}).get("about", {}).get("content", "").strip()
+        raw_msg = custom_c if custom_c else get_default_info_content("about")
+        msg, parsed_kb = parse_inline_buttons(raw_msg)
+        default_kb = [
             [InlineKeyboardButton("➥ Join Community", url=f"https://t.me/{BOT_USERNAME}")],
             [InlineKeyboardButton("« Back to Info Menu", callback_data="info_menu")]
         ]
+        reply_markup = InlineKeyboardMarkup(parsed_kb) if parsed_kb else InlineKeyboardMarkup(default_kb)
         if query.message.photo:
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=reply_markup)
         else:
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=reply_markup)
 
     elif data == "info_terms":
-        msg = f"""• **Terms & Policy / নীতিমালা ও শর্তাবলী**
-━━━━━━━━━━━━━━━━━━━━
-
-১. **কোর্স অ্যাক্সেস:** ক্রয়কৃত কোর্সের ম্যাটেরিয়াল ও লিংকে আপনি ফুল অ্যাক্সেস পাবেন।
-২. **পেমেন্ট ভেরিফিকেশন:** ভুল TrxID বা সঠিক টাকার কম পেমেন্ট করলে অর্ডার বাতিল হবে।
-৩. **নন-রিফান্ডেবল:** ডিজিটাল কোর্স মেটেরিয়াল ও অ্যাক্সেস লিংক সরবরাহ করার পর তা রিফান্ডযোগ্য নয়।
-৪. **কপিরাইট ও শেয়ারিং:** কোর্সের কন্টেন্ট অন্য কোথাও বিক্রয় বা বাণিজ্যিকভাবে শেয়ার করা সম্পূর্ণরূপে নিষিদ্ধ।
-৫. **সাপোর্ট:** কোনো সমস্যা হলে সর্বদা আমাদের অফিসিয়াল এডমিনের সাথে যোগাযোগ করবেন।"""
-        keyboard = [
+        cfg = db.get_info_settings()
+        custom_c = cfg.get("items", {}).get("terms", {}).get("content", "").strip()
+        raw_msg = custom_c if custom_c else get_default_info_content("terms")
+        msg, parsed_kb = parse_inline_buttons(raw_msg)
+        default_kb = [
             [InlineKeyboardButton("« Back to Info Menu", callback_data="info_menu")]
         ]
+        reply_markup = InlineKeyboardMarkup(parsed_kb) if parsed_kb else InlineKeyboardMarkup(default_kb)
         if query.message.photo:
             try:
                 await query.message.delete()
             except Exception:
                 pass
-            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=reply_markup)
         else:
-            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=reply_markup)
+
+    elif data.startswith("cinfo_view_"):
+        c_id = data.replace("cinfo_view_", "")
+        btn = db.get_custom_info_button(c_id)
+        if btn:
+            btn_lbl = html.escape(btn.get("label", "Info"))
+            btn_cnt = html.escape(btn.get("content", ""))
+            msg = f"ℹ️ <b>{btn_lbl}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n{btn_cnt}"
+            await query.edit_message_text(
+                msg,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back to Info Menu", callback_data="info_menu")]])
+            )
+        else:
+            await query.answer("Button not found!")
 
     # Category and Sub-category Browsing
     elif data.startswith("cat_"):
@@ -1681,6 +1763,19 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
                         InlineKeyboardButton(f"{child}{child_tag} ({child_count})", callback_data=f"subcat_{category}_{child_path}")
                     ])
 
+                # Direct courses in this exact folder (e.g. FT EBI 4.0 in HSC 28 > Academy Program)
+                direct_courses = db.get_courses_by_folder(nested_path, include_inactive=is_admin(user_id))
+                for course in direct_courses:
+                    price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
+                    is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+                    status_tag = "🔴 " if (course.get("status") == "inactive" and is_admin(user_id)) else ""
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"{status_tag}{course['name']}{price_tag}{is_bought}",
+                            callback_data=f"course_{course['id']}"
+                        )
+                    ])
+
                 # View All Courses button for this subfolder/branch
                 if db.is_view_all_courses_enabled():
                     sub_leaf_name = subcat.split(" > ")[-1]
@@ -1692,7 +1787,18 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
                 parent_segs = subcat.split(" > ")
                 back_cb = f"subcat_{category}_{' > '.join(parent_segs[:-1])}" if len(parent_segs) > 1 else f"cat_{category}"
                 keyboard.append([InlineKeyboardButton("« Back", callback_data=back_cb)])
-                msg_text = f"📂 **{category} | {subcat} এর বিষয় / সাব-ক্যাটাগরি:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা প্রোগ্রাম বেছে নিন:"
+
+                if is_admin(user_id):
+                    keyboard.append([
+                        InlineKeyboardButton(f"➕ Add Course in '{subcat}'", callback_data=f"adm_addcourse_dir_{nested_path}"),
+                        InlineKeyboardButton("📁 Manage Folder", callback_data=f"adm_dir_{nested_path}")
+                    ])
+
+                if direct_courses:
+                    msg_text = f"📂 **{category} | {subcat} এর বিষয় ও কোর্সসমূহ:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা কোর্স বেছে নিন:"
+                else:
+                    msg_text = f"📂 **{category} | {subcat} এর বিষয় / সাব-ক্যাটাগরি:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা প্রোগ্রাম বেছে নিন:"
+
                 if query.message.photo:
                     try:
                         await query.message.delete()
@@ -1732,9 +1838,10 @@ TrxID টি বটে সেন্ড করলেই আপনার অর্
 
         if is_admin(user_id):
             if subcat != "ALL":
+                nested_path = f"{category} > {subcat}"
                 keyboard.append([
-                    InlineKeyboardButton(f"➕ Add Course in '{subcat}'", callback_data=f"adm_addcourse_sub_{category}_{subcat}"),
-                    InlineKeyboardButton("📁 Manage Folder", callback_data=f"adm_subcatm_{category}_{subcat}")
+                    InlineKeyboardButton(f"➕ Add Course in '{subcat}'", callback_data=f"adm_addcourse_dir_{nested_path}"),
+                    InlineKeyboardButton("📁 Manage Folder", callback_data=f"adm_dir_{nested_path}")
                 ])
             else:
                 keyboard.append([
@@ -2117,7 +2224,7 @@ Enter your code to claim your discount."""
                     db.store_user_access_link(user_id, cid, c_obj["access_link"])
                     dyn_link = await get_dynamic_access_link(context.bot, c_obj["access_link"], user_id)
                     if dyn_link:
-                        keyboard.append([InlineKeyboardButton(f"🚀 {c_obj['name']}", url=dyn_link)])
+                        keyboard.append([InlineKeyboardButton(f"{c_obj['name']}", url=dyn_link)])
             db.clear_cart(user_id)
             keyboard.append([InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav")])
         else:
@@ -2127,7 +2234,7 @@ Enter your code to claim your discount."""
                 db.store_user_access_link(user_id, course_id, c_obj["access_link"])
                 dyn_link = await get_dynamic_access_link(context.bot, c_obj["access_link"], user_id)
                 if dyn_link:
-                    keyboard.append([InlineKeyboardButton(f"🚀 {c_obj['name']}", url=dyn_link)])
+                    keyboard.append([InlineKeyboardButton(f"{c_obj['name']}", url=dyn_link)])
             keyboard.append([InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav")])
 
         if db.is_home_button_enabled():
@@ -2277,13 +2384,16 @@ Enter your code to claim your discount."""
     elif data == "my_orders_history":
         orders = db.get_user_orders(user_id)
         if not orders:
-            await query.edit_message_text("🧾 আপনার কোনো অর্ডার রেকর্ড পাওয়া যায়নি।", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")]]))
+            await query.edit_message_text("🧾 No order history found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")]]))
             return
-        msg = "🧾 **অর্ডার হিস্ট্রি (Order History):**\n\n"
+        msg = "🧾 <b>Order History:</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
         for o in orders[:8]:
-            status_bn = "⏳ অপেক্ষমান (Pending)" if o['status'] == 'pending' else "✅ অনুমোদিত (Approved)" if o['status'] == 'approved' else "❌ বাতিল (Rejected)"
-            msg += f"• **ID:** `{format_order_id_display(o['order_id'])}`\n  📘 **কোর্স:** {o.get('course_name', 'N/A')}\n  💰 **মূল্য:** ৳{o['amount']} BDT | {o.get('payment_method', '')}\n  📌 **স্ট্যাটাস:** {status_bn}\n\n"
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")]]))
+            status_en = "⏳ Pending" if o['status'] == 'pending' else "✅ Approved" if o['status'] == 'approved' else "❌ Rejected"
+            c_name_esc = html.escape(str(o.get('course_name', 'N/A')))
+            pay_m_esc = html.escape(str(o.get('payment_method', '')))
+            pay_info = f" | {pay_m_esc}" if pay_m_esc else ""
+            msg += f"• <b>ID:</b> <code>{format_order_id_display(o['order_id'])}</code>\n  <b>Course:</b> {c_name_esc}\n  💰 <b>Amount:</b> ৳{o['amount']} BDT{pay_info}\n  📌 <b>Status:</b> {status_en}\n\n"
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Profile", callback_data="profile_nav")]]))
 
     elif data == "cancel_buy" or data == "cancel_trxid":
         context.user_data["awaiting_trxid"] = False
@@ -2638,6 +2748,27 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_admin_payment_input(update, context)
         return
 
+    if context.user_data.get("admin_edit_infoitem_key"):
+        item_key = context.user_data.pop("admin_edit_infoitem_key")
+        if text == "/cancel" or text.lower() == "cancel":
+            back_kb = [[InlineKeyboardButton("« Back to Section", callback_data=f"adm_infoitem_{item_key}")]]
+            await update.message.reply_text("✕ Editing cancelled.", reply_markup=InlineKeyboardMarkup(back_kb))
+            return
+        db.update_info_item(item_key, content=text)
+        if item_key == "contact":
+            db.set_setting("support_message", text)
+        item_label = db.get_info_settings().get("items", {}).get(item_key, {}).get("label") or item_key
+        keyboard = [
+            [InlineKeyboardButton(f"🔍 View {item_label}", callback_data=f"adm_infoitem_{item_key}")],
+            [InlineKeyboardButton("ℹ️ Info Button Settings", callback_data="adm_info_buttons")]
+        ]
+        await update.message.reply_text(
+            f"✅ Description for '<b>{html.escape(item_label)}</b>' updated successfully!",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
     if context.user_data.get("admin_msg_edit_key"):
         msg_key = context.user_data.pop("admin_msg_edit_key")
         if text == "/cancel" or text.lower() == "cancel":
@@ -2735,6 +2866,38 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fake_query = FakeCallbackQuery(update.message)
                     await render_hbtn_edit_panel(fake_query, context, r_idx, c_idx)
         return
+
+    if context.user_data.get("admin_add_infobtn_step"):
+        step = context.user_data.get("admin_add_infobtn_step")
+        if text == "/cancel" or text.lower() == "cancel":
+            context.user_data.pop("admin_add_infobtn_step", None)
+            context.user_data.pop("admin_add_infobtn_data", None)
+            await update.message.reply_text("✕ Add Info Button cancelled.", reply_markup=main_menu_keyboard(user_id))
+            return
+
+        if step == "label":
+            if not context.user_data.get("admin_add_infobtn_data"):
+                context.user_data["admin_add_infobtn_data"] = {}
+            context.user_data["admin_add_infobtn_data"]["label"] = text
+            context.user_data["admin_add_infobtn_step"] = "content"
+            await update.message.reply_text(
+                "✍️ <b>Enter the URL link or text content for this button:</b>\n\n• If you provide a link (e.g. <code>https://t.me/...</code>), it will open as a URL.\n• If you provide text, clicking the button will display your text.\n\nType /cancel to abort.",
+                parse_mode="HTML"
+            )
+            return
+        elif step == "content":
+            btn_data = context.user_data.pop("admin_add_infobtn_data", {})
+            context.user_data.pop("admin_add_infobtn_step", None)
+            lbl = btn_data.get("label", "Info Button")
+            b_type = "url" if (text.startswith("http://") or text.startswith("https://") or text.startswith("t.me")) else "text"
+            db.add_custom_info_button(lbl, b_type, text)
+            keyboard = [[InlineKeyboardButton("ℹ️ Info Button Settings", callback_data="adm_info_buttons")]]
+            await update.message.reply_text(
+                f"✅ Custom Info button '<b>{html.escape(lbl)}</b>' added successfully!",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
 
     if context.user_data.get("admin_user_step"):
         await handle_admin_user_mgmt_input(update, context)
@@ -2909,12 +3072,31 @@ async def show_subcategories_message(update: Update, category: str):
             row = []
     if row:
         keyboard.append(row)
+
+    # Direct courses in root category (if any)
+    direct_courses = db.get_courses_by_folder(category, include_inactive=show_inactive)
+    for course in direct_courses:
+        price_tag = f" ({course['price']} ৳)" if course.get('price', 0) > 0 else " (বিনামূল্যে 🎁)"
+        is_bought = " [এনরোল করা ✅]" if db.is_purchased(user_id, course["id"]) else ""
+        status_tag = "🔴 " if (course.get("status") == "inactive" and show_inactive) else ""
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{status_tag}{course['name']}{price_tag}{is_bought}",
+                callback_data=f"course_{course['id']}"
+            )
+        ])
+
     if db.is_view_all_courses_enabled():
         all_c = db.get_courses_by_filter(category=category, include_inactive=show_inactive)
         keyboard.append([InlineKeyboardButton(f"🎓 View All {category} Courses ({len(all_c)})", callback_data=f"subcat_{category}_ALL")])
     keyboard.append([InlineKeyboardButton("« All Categories", callback_data="back_to_categories")])
 
-    text = f"📂 **{category} এর বিষয় / সাব-ক্যাটাগরি:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা প্রোগ্রাম বেছে নিন:"
+    if subcats and direct_courses:
+        text = f"📂 **{category} এর বিষয় ও কোর্সসমূহ:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা কোর্স বেছে নিন:"
+    elif direct_courses:
+        text = f"📚 **{category} এর কোর্সসমূহ:**\n━━━━━━━━━━━━━━━━━━━━\nযে কোর্সের তথ্য দেখতে চান সেটিতে ক্লিক করুন:"
+    else:
+        text = f"📂 **{category} এর বিষয় / সাব-ক্যাটাগরি:**\n━━━━━━━━━━━━━━━━━━━━\nআপনার প্রয়োজনীয় বিষয় বা প্রোগ্রাম বেছে নিন:"
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
@@ -3064,7 +3246,7 @@ async def handle_coupon_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             if access_link:
                 dyn_link = await get_dynamic_access_link(context.bot, access_link, user_id)
                 if dyn_link:
-                    keyboard.append([InlineKeyboardButton("🚀 Go to Course", url=dyn_link)])
+                    keyboard.append([InlineKeyboardButton("Go to Course", url=dyn_link)])
             keyboard.append([InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav")])
 
             try:
@@ -3410,12 +3592,14 @@ def get_admin_dashboard_keyboard(user_id: int) -> InlineKeyboardMarkup:
         keyboard.append(r5)
 
     # Row 6: Settings
-    r6 = []
     if db.has_permission(user_id, "bot_settings"):
-        r6.append(InlineKeyboardButton("⚙️ Keyboard Settings", callback_data="adm_keyboard_settings"))
-        r6.append(InlineKeyboardButton("⚙️ Bot Settings", callback_data="adm_bot_settings"))
-    if r6:
-        keyboard.append(r6)
+        keyboard.append([
+            InlineKeyboardButton("⚙️ Keyboard Settings", callback_data="adm_keyboard_settings"),
+            InlineKeyboardButton("ℹ️ Info Button Settings", callback_data="adm_info_buttons")
+        ])
+        keyboard.append([
+            InlineKeyboardButton("⚙️ Bot Settings", callback_data="adm_bot_settings")
+        ])
 
     # Row 7: Maintenance
     if db.has_permission(user_id, "bot_settings"):
@@ -3543,7 +3727,7 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
 
     # 2. Courses in this folder (if any)
     for c in courses[:25]:
-        price_tag = f" ({c['price']}৳)" if c.get('price', 0) > 0 else " (Free 🎁)"
+        price_tag = f" ({c['price']}৳)" if c.get('price', 0) > 0 else " (Free)"
         status_dot = "🔴 " if c.get("status") == "inactive" else ""
         keyboard.append([
             InlineKeyboardButton(f"{status_dot}{c['name']} — {c['price']}৳" if c.get('price', 0) > 0 else f"{status_dot}{c['name']} — Free 🎁", callback_data=f"adm_edit_{c['id']}")
@@ -3656,7 +3840,7 @@ async def render_admin_ebook_folder_directory(query, context: ContextTypes.DEFAU
 
     # 2. E-Books in this folder (if any)
     for eb in ebooks[:25]:
-        price_tag = f" ({eb['price']}৳)" if eb.get('price', 0) > 0 else " (Free 🎁)"
+        price_tag = f" ({eb['price']}৳)" if eb.get('price', 0) > 0 else " (Free)"
         status_dot = "🔴 " if eb.get("status") == "inactive" else ""
         keyboard.append([
             InlineKeyboardButton(f"{status_dot}{eb['name']} — {eb['price']}৳" if eb.get('price', 0) > 0 else f"{status_dot}{eb['name']} — Free 🎁", callback_data=f"adm_vieweb_{eb['id']}")
@@ -4049,6 +4233,124 @@ Here is the current home inline buttons layout. (🟢 = Enabled / 🔴 = Disable
     await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+async def render_info_buttons_panel(query):
+    cfg = db.get_info_settings()
+    items = cfg.get("items", {})
+    custom_btns = cfg.get("custom_buttons", [])
+    header_txt = cfg.get("header_text", "")
+    if len(header_txt) > 40:
+        header_preview = header_txt[:40].replace("\n", " ") + "..."
+    else:
+        header_preview = header_txt.replace("\n", " ")
+
+    def status_icon(key):
+        return "🟢" if items.get(key, {}).get("enabled", True) else "🔴"
+
+    def content_status(key):
+        return "✏️ Custom" if items.get(key, {}).get("content", "").strip() else "📄 Default"
+
+    custom_str = ""
+    if custom_btns:
+        custom_str = "\n<b>Custom Buttons:</b>\n" + "\n".join(
+            [f"• {html.escape(b['label'])} [{'🟢 ON' if b.get('enabled', True) else '🔴 OFF'}]" for b in custom_btns]
+        ) + "\n"
+
+    msg = f"""ℹ️ <b>[ Info Button & Description Settings ]</b>
+━━━━━━━━━━━━━━━━━━━━
+Manage the buttons, visibility, and text descriptions of the <b>ℹ Info</b> menu:
+
+<b>Menu Sections & Current Status:</b>
+• 💬 Contact Support: {status_icon('contact')} [{content_status('contact')}]
+• 📖 How to Buy: {status_icon('how_to_buy')} [{content_status('how_to_buy')}]
+• 🎓 About StudyMart: {status_icon('about')} [{content_status('about')}]
+• 📜 Terms & Policy: {status_icon('terms')} [{content_status('terms')}]
+{custom_str}
+<b>Header Text Preview:</b>
+↳ <code>{html.escape(header_preview)}</code>
+
+👇 <b>Click any section below to edit its text description or toggle ON/OFF:</b>"""
+
+    keyboard = [
+        [
+            InlineKeyboardButton(f"{status_icon('contact')} 💬 Contact Support", callback_data="adm_infoitem_contact"),
+            InlineKeyboardButton(f"{status_icon('how_to_buy')} 📖 How to Buy", callback_data="adm_infoitem_how_to_buy")
+        ],
+        [
+            InlineKeyboardButton(f"{status_icon('about')} 🎓 About StudyMart", callback_data="adm_infoitem_about"),
+            InlineKeyboardButton(f"{status_icon('terms')} 📜 Terms & Policy", callback_data="adm_infoitem_terms")
+        ],
+        [
+            InlineKeyboardButton("➕ Add Custom Button", callback_data="adm_infobtn_add"),
+            InlineKeyboardButton("✏️ Edit Header Text", callback_data="adm_editmsg_info_message")
+        ]
+    ]
+    if custom_btns:
+        keyboard.append([InlineKeyboardButton("🗑️ Delete Custom Button", callback_data="adm_infobtn_del_list")])
+    keyboard.append([
+        InlineKeyboardButton("« Bot Settings", callback_data="adm_bot_settings"),
+        InlineKeyboardButton("« Admin Menu", callback_data="adm_main")
+    ])
+
+    if query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def render_info_item_editor(query, item_key: str):
+    cfg = db.get_info_settings()
+    item = cfg.get("items", {}).get(item_key, {})
+    label = item.get("label") or item_key
+    enabled = item.get("enabled", True)
+    custom_content = item.get("content", "").strip()
+    status_str = "🟢 Enabled (ON)" if enabled else "🔴 Disabled (OFF)"
+    
+    if custom_content:
+        content_preview = custom_content
+        mode_str = "🟢 <b>Custom Text</b>"
+    else:
+        content_preview = get_default_info_content(item_key)
+        mode_str = "⚪ <b>Default Template</b>"
+
+    if len(content_preview) > 500:
+        preview_disp = content_preview[:500] + "\n...(preview truncated)..."
+    else:
+        preview_disp = content_preview
+
+    msg = f"""ℹ️ <b>[ Info Section: {html.escape(label)} ]</b>
+━━━━━━━━━━━━━━━━━━━━
+📌 <b>Visibility:</b> {status_str}
+📝 <b>Content Status:</b> {mode_str}
+
+📖 <b>Current Description / Text Preview:</b>
+<blockquote>{html.escape(preview_disp)}</blockquote>
+
+👇 <b>Choose an action:</b>"""
+
+    keyboard = [
+        [
+            InlineKeyboardButton(f"🔄 Toggle: {'ON 🟢' if enabled else 'OFF 🔴'}", callback_data=f"adm_infotog_{item_key}"),
+            InlineKeyboardButton("✏️ Edit Description", callback_data=f"adm_infoedit_{item_key}")
+        ]
+    ]
+    if custom_content:
+        keyboard.append([InlineKeyboardButton("🔄 Reset to Default Template", callback_data=f"adm_inforeset_{item_key}")])
+    keyboard.append([InlineKeyboardButton("« Back to Info Settings", callback_data="adm_info_buttons")])
+
+    if query.message.photo:
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
 async def prompt_add_hbtn_row(query, context):
     grid = get_home_keyboard_grid()
     keyboard = []
@@ -4180,7 +4482,7 @@ def check_admin_callback_permission(user_id: int, data: str) -> tuple[bool, str]
         data.startswith("adm_home_buttons") or data.startswith("adm_toggle_maintenance") or 
         data.startswith("adm_toggle_home_btn") or data.startswith("adm_toggle_view_all_courses") or
         data.startswith("adm_editmsg_") or data.startswith("adm_resetmsg_") or 
-        data.startswith("adm_kb_") or data.startswith("adm_hbtn_")):
+        data.startswith("adm_kb_") or data.startswith("adm_hbtn_") or data.startswith("adm_info")):
         if not db.has_permission(user_id, "bot_settings"):
             return False, "Bot Settings"
 
@@ -4215,7 +4517,7 @@ async def render_coupon_course_select_page(query, page: int = 1):
 
     keyboard = []
     for cid, c in page_courses:
-        keyboard.append([InlineKeyboardButton(f"📘 {c['name'][:30]}", callback_data=f"cpnwiz_course_{cid}")])
+        keyboard.append([InlineKeyboardButton(f"{c['name'][:30]}", callback_data=f"cpnwiz_course_{cid}")])
 
     nav_row = []
     if page > 1:
@@ -4366,6 +4668,79 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if data == "adm_home_buttons":
         await render_home_buttons_panel(query)
+        return
+
+    elif data == "adm_info_buttons":
+        await render_info_buttons_panel(query)
+        return
+
+    elif data.startswith("adm_infoitem_"):
+        item_key = data.replace("adm_infoitem_", "")
+        await render_info_item_editor(query, item_key)
+        return
+
+    elif data.startswith("adm_infoedit_"):
+        item_key = data.replace("adm_infoedit_", "")
+        context.user_data["admin_edit_infoitem_key"] = item_key
+        item_label = db.get_info_settings().get("items", {}).get(item_key, {}).get("label") or item_key
+        await query.edit_message_text(
+            f"✍️ <b>Enter the new description / text for '{html.escape(item_label)}':</b>\n\n"
+            f"💡 <i>You can use Markdown or HTML tags. You can also append buttons using <code>[Button Text](URL)</code> at the end of the text.</i>\n\n"
+            f"Type /cancel to abort.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data=f"adm_infoitem_{item_key}")]])
+        )
+        return
+
+    elif data.startswith("adm_inforeset_"):
+        item_key = data.replace("adm_inforeset_", "")
+        db.reset_info_item(item_key)
+        if item_key == "contact":
+            db.delete_setting("support_message")
+        await query.answer("Reset to default template successfully!", show_alert=True)
+        await render_info_item_editor(query, item_key)
+        return
+
+    elif data.startswith("adm_infotog_"):
+        item_key = data.replace("adm_infotog_", "")
+        db.toggle_info_item_status(item_key)
+        await query.answer("Status toggled!")
+        await render_info_item_editor(query, item_key)
+        return
+
+    elif data == "adm_infobtn_add":
+        context.user_data["admin_add_infobtn_step"] = "label"
+        context.user_data["admin_add_infobtn_data"] = {}
+        await query.edit_message_text(
+            "✍️ <b>Enter the title/label for the new Info button:</b>\n(e.g., <code>📢 Join Channel</code> or <code>📋 FAQ</code>)\n\nType /cancel to abort.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data="adm_info_buttons")]])
+        )
+        return
+
+    elif data == "adm_infobtn_del_list":
+        cfg = db.get_info_settings()
+        c_btns = cfg.get("custom_buttons", [])
+        if not c_btns:
+            await query.answer("No custom buttons found to delete!", show_alert=True)
+            await render_info_buttons_panel(query)
+            return
+        keyboard = []
+        for b in c_btns:
+            keyboard.append([InlineKeyboardButton(f"✕ {b['label']}", callback_data=f"adm_infobtn_del_{b['id']}")])
+        keyboard.append([InlineKeyboardButton("« Cancel", callback_data="adm_info_buttons")])
+        await query.edit_message_text(
+            "👇 <b>Select a custom button to delete:</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    elif data.startswith("adm_infobtn_del_"):
+        btn_id = data.replace("adm_infobtn_del_", "")
+        db.delete_custom_info_button(btn_id)
+        await query.answer("Button deleted!")
+        await render_info_buttons_panel(query)
         return
 
     elif data == "adm_hbtn_add":
@@ -5077,6 +5452,7 @@ Here is the status of your bot's automated messages & buttons:
                 InlineKeyboardButton("🏡 Home Buttons Settings", callback_data="adm_home_buttons")
             ],
             [
+                InlineKeyboardButton("ℹ️ Info Button Settings", callback_data="adm_info_buttons"),
                 InlineKeyboardButton("« Admin Menu", callback_data="adm_main")
             ]
         ]
@@ -5170,10 +5546,10 @@ Here is the status of your bot's automated messages & buttons:
                 return f"<code>{html.escape(preview)}</code>"
 
             # Defaults for the 4 types
-            df_free_wl = "🎉 **আপনার কোর্স অ্যাক্সেস নিশ্চিত করা হয়েছে!**\n\n📘 **কোর্স:** {course_name}\n\n👇 ক্লাসে যুক্ত হতে নিচের বাটনে চাপ দিন:"
-            df_free_nl = "🎉 **আপনার কোর্স অ্যাক্সেস নিশ্চিত করা হয়েছে!**\n\n📘 **কোর্স:** {course_name}\n\n⚠️ এই কোর্সের কোনো সরাসরি লিংক পাওয়া যায়নি। কোনো তথ্যের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।"
-            df_paid_wl = "🎉 **আপনার পেমেন্ট সফল হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **Order ID:** `{order_id}`\n📘 **কোর্স:** {course_name}\n💰 **টাকা:** {amount} ৳\n\n👇 ক্লাসে যুক্ত হতে নিচের বাটনে চাপ দিন:"
-            df_paid_nl = "🎉 **আপনার পেমেন্ট সফল হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **Order ID:** `{order_id}`\n📘 **কোর্স:** {course_name}\n💰 **টাকা:** {amount} ৳\n\n⚠️ এই কোর্সের সরাসরি লিংক যুক্ত করা নেই। অ্যাডমিন আপনার অ্যাক্সেস নিশ্চিত করার পর গ্রুপ/চ্যানেল লিংক জানিয়ে দেওয়া হবে।"
+            df_free_wl = "🎉 **Your Course Access is Confirmed!**\n\n**Course:** {course_name}\n\n👇 Click the button below to join your course:\n{access_text}"
+            df_free_nl = "🎉 **Your Course Access is Confirmed!**\n\n**Course:** {course_name}\n\n⚠️ No direct link is currently available. Please contact admin."
+            df_paid_wl = "🎉 **Your Course Purchase was Successful!**\n\n**Course:** {course_name}\n**Order ID:** `{order_id}`\n\n✅ **Payment completed successfully.**\n\n👇 Click the button below to join your course:\n{access_text}"
+            df_paid_nl = "🎉 **Your Course Purchase was Successful!**\n\n**Course:** {course_name}\n**Order ID:** `{order_id}`\n\n✅ **Payment completed successfully.**\n\n⚠️ No direct link is attached to this course. Please contact support."
 
             msg = f"""📦 <b>Delivery Text Settings</b>
 ━━━━━━━━━━━━━━━━━━━━
@@ -5218,8 +5594,12 @@ Here is the status of your bot's automated messages & buttons:
         if current_val:
             edit_kb[0].append(InlineKeyboardButton("🗑️ Reset to Default", callback_data=f"adm_resetmsg_{msg_key}"))
 
+        help_text = ""
+        if msg_key.startswith("delivery_"):
+            help_text = "\n💡 <i>Supported placeholders:</i> <code>{course_name}</code> (or <code>${courseName}</code>), <code>{order_id}</code>, <code>{amount}</code>, <code>{access_text}</code>\n"
+
         await query.edit_message_text(
-            f"✏️ <b>Edit {display_key}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n{preview}\n\n👇 <b>Send the new message:</b>\n(Or use the buttons below to abort or reset)",
+            f"✏️ <b>Edit {display_key}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n{preview}\n{help_text}\n👇 <b>Send the new message:</b>\n(Or use the buttons below to abort or reset)",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(edit_kb)
         )
@@ -6111,7 +6491,7 @@ Choose how you want to broadcast:
         active_dir = context.user_data.get("active_dir", "")
         segments = [s.strip() for s in active_dir.split(">") if s.strip()]
         cat = segments[0] if segments else "General"
-        sub = segments[-1] if len(segments) > 1 else "General"
+        sub = " > ".join(segments[1:]) if len(segments) > 1 else "General"
 
         context.user_data["admin_add_course"] = True
         context.user_data["course_step"] = "name"
@@ -6120,7 +6500,7 @@ Choose how you want to broadcast:
             "category": cat,
             "subcategory": sub,
             "folder_path": active_dir,
-            "program": sub.lower()
+            "program": segments[-1].lower() if segments else "general"
         }
 
         path_disp = active_dir if active_dir else "General"
@@ -6128,7 +6508,7 @@ Choose how you want to broadcast:
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: 📘 BH Biology Full Course | {cat})
+(যেমন: BH Biology Full Course | {cat})
 
 💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।"""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{active_dir}")]]
@@ -6150,7 +6530,7 @@ Choose how you want to broadcast:
 
         segments = [s.strip() for s in target_path.split(">") if s.strip()]
         cat = segments[0] if segments else "General"
-        sub = segments[-1] if len(segments) > 1 else "General"
+        sub = " > ".join(segments[1:]) if len(segments) > 1 else "General"
 
         context.user_data["active_dir"] = target_path
         context.user_data["admin_add_course"] = True
@@ -6159,14 +6539,14 @@ Choose how you want to broadcast:
             "category": cat,
             "subcategory": sub,
             "folder_path": target_path,
-            "program": sub.lower()
+            "program": segments[-1].lower() if segments else "general"
         }
 
         msg = f"""📁 **ডিরেক্টরি: `{target_path}`**
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: 📘 BH Biology Full Course | {cat})
+(যেমন: BH Biology Full Course | {cat})
 
 💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{target_path}` ডিরেক্টরিতে সেট করা থাকবে।"""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{target_path}")]]
@@ -6195,7 +6575,7 @@ Choose how you want to broadcast:
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: 📘 BH Biology Full Course | {cat})
+(যেমন: BH Biology Full Course | {cat})
 
 💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{cat}` ডিরেক্টরিতে সেট করা থাকবে।"""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{cat}")]]
@@ -6405,7 +6785,7 @@ Choose how you want to broadcast:
         if active_dir:
             segments = [s.strip() for s in active_dir.split(">") if s.strip()]
             cat = segments[0] if segments else "General"
-            sub = segments[-1] if len(segments) > 1 else "General"
+            sub = " > ".join(segments[1:]) if len(segments) > 1 else "General"
 
             context.user_data["admin_add_course"] = True
             context.user_data["course_step"] = "name"
@@ -6414,7 +6794,7 @@ Choose how you want to broadcast:
                 "category": cat,
                 "subcategory": sub,
                 "folder_path": active_dir,
-                "program": sub.lower()
+                "program": segments[-1].lower() if segments else "general"
             }
 
             path_disp = active_dir
@@ -6422,7 +6802,7 @@ Choose how you want to broadcast:
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: 📘 BH Biology Full Course | {cat})
+(যেমন: BH Biology Full Course | {cat})
 
 💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।"""
             k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{active_dir}")]]
@@ -6613,8 +6993,15 @@ Choose how you want to broadcast:
             new_course["access_link"] = ""
 
         db.add_course(course_id, new_course)
-        db.add_category(new_course["category"])
-        db.add_subcategory(new_course["category"], new_course["subcategory"])
+        fld = new_course.get("folder_path", "").strip()
+        if fld:
+            fld_segments = [s.strip() for s in fld.split(">") if s.strip()]
+            for i in range(len(fld_segments)):
+                parent = " > ".join(fld_segments[:i])
+                name = fld_segments[i]
+                db.add_sub_folder(parent, name)
+        else:
+            db.add_category(new_course.get("category", "General"))
 
         context.user_data["admin_add_course"] = False
         context.user_data.pop("new_course", None)
@@ -6634,9 +7021,8 @@ Choose how you want to broadcast:
 💡 শিক্ষার্থীরা এখন সরাসরি বটের মেনু থেকে এই কোর্সটি দেখতে ও কিনতে পারবে।"""
 
         k_done = [
-            [InlineKeyboardButton(f"📁 Open '{new_course['subcategory']}' Folder", callback_data=f"adm_subcatm_{new_course['category']}_{new_course['subcategory']}")],
-            [InlineKeyboardButton(f"➕ Add Another in '{new_course['subcategory']}'", callback_data=f"adm_addcourse_sub_{new_course['category']}_{new_course['subcategory']}")],
-            [InlineKeyboardButton(f"📁 '{new_course['category']}' Main Folder", callback_data=f"adm_catm_{new_course['category']}")],
+            [InlineKeyboardButton("📁 Open Folder", callback_data=f"adm_dir_{fld}" if fld else "adm_categories")],
+            [InlineKeyboardButton("➕ Add Another Course", callback_data=f"adm_addcourse_dir_{fld}" if fld else "adm_add_course")],
             [InlineKeyboardButton("📂 All Categories", callback_data="adm_categories")]
         ]
         if query.message.photo:
@@ -6760,7 +7146,7 @@ Choose how you want to broadcast:
 ━━━━━━━━━━━━━━━━━━━━
 
 ✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: 📘 BH Biology Full Course | {cat})
+(যেমন: BH Biology Full Course | {cat})
 
 💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{fld}` ডিরেক্টরিতে সেট করা থাকবে।"""
             k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{fld}")]]
@@ -6806,7 +7192,7 @@ Choose how you want to broadcast:
 
         keyboard = []
         for cid, c in list(courses.items())[:30]:
-            price_tag = f" ({c['price']}৳)" if c.get('price', 0) > 0 else " (Free 🎁)"
+            price_tag = f" ({c['price']}৳)" if c.get('price', 0) > 0 else " (Free)"
             keyboard.append([
                 InlineKeyboardButton(f"{c['name']}{price_tag}", callback_data=f"adm_edit_{cid}")
             ])
@@ -7532,15 +7918,15 @@ Choose how you want to broadcast:
                 try:
                     await context.bot.send_message(
                         reward_uid,
-                        f"""🎉 **অভিনন্দন! আপনার রেফারেল কুপন দিয়ে একটি কোর্স বিক্রয় সম্পন্ন হয়েছে!**
+                        f"""🎉 <b>Referral Reward Earned!</b>
 ━━━━━━━━━━━━━━━━━━━━
 
-🏷️ **কুপন কোড:** `{c_code}`
-📦 **Order ID:** `{format_order_id_display(order_id)}`
-💰 **আপনার অর্জিত রিওয়ার্ড:** +`{r_amount}` ৳
+🏷️ <b>Coupon Code:</b> <code>{c_code}</code>
+📦 <b>Order ID:</b> <code>{format_order_id_display(order_id)}</code>
+💰 <b>Reward Earned:</b> <code>+৳{r_amount} BDT</code>
 
-✨ আপনার একাউন্ট ব্যালেন্সে টাকা যুক্ত হয়েছে। প্রোফাইল থেকে '◈ Earnings & Withdraw' মেনুতে গিয়ে ব্যালেন্স দেখতে ও উত্তোলন করতে পারবেন।""",
-                        parse_mode="Markdown"
+✨ <i>The reward has been added to your account balance. Check your profile to view your balance.</i>""",
+                        parse_mode="HTML"
                     )
                 except Exception as e:
                     logger.error(f"রেফারেল রিওয়ার্ড নোটিফিকেশন পাঠাতে সমস্যা: {e}")
@@ -7560,27 +7946,35 @@ Choose how you want to broadcast:
             if is_free:
                 if has_link:
                     template_key = "delivery_free_with_link"
-                    default_delivery = "🎉 **আপনার কোর্স অ্যাক্সেস নিশ্চিত করা হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📘 **কোর্স:** {course_name}\n\n👇 ক্লাসে যুক্ত হতে নিচের বাটনে চাপ দিন:\n{access_text}"
+                    default_delivery = "🎉 **Your Course Access is Confirmed!**\n\n**Course:** {course_name}\n\n👇 Click the button below to join your course:\n{access_text}"
                 else:
                     template_key = "delivery_free_no_link"
-                    default_delivery = "🎉 **আপনার কোর্স অ্যাক্সেস নিশ্চিত করা হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📘 **কোর্স:** {course_name}\n\n⚠️ এই কোর্সের কোনো সরাসরি লিংক পাওয়া যায়নি। কোনো তথ্যের জন্য অ্যাডমিনের সাথে যোগাযোগ করুন।"
+                    default_delivery = "🎉 **Your Course Access is Confirmed!**\n\n**Course:** {course_name}\n\n⚠️ No direct link is currently available. Please contact admin."
             else:
                 if has_link:
                     template_key = "delivery_paid_with_link"
-                    default_delivery = "🎉 **আপনার পেমেন্ট সফল হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **Order ID:** `{order_id}`\n📘 **কোর্স:** {course_name}\n💰 **টাকা:** {amount} ৳\n\n👇 ক্লাসে যুক্ত হতে নিচের বাটনে চাপ দিন:\n{access_text}"
+                    default_delivery = "🎉 **Your Course Purchase was Successful!**\n\n**Course:** {course_name}\n**Order ID:** `{order_id}`\n\n✅ **Payment completed successfully.**\n\n👇 Click the button below to join your course:\n{access_text}"
                 else:
                     template_key = "delivery_paid_no_link"
-                    default_delivery = "🎉 **আপনার পেমেন্ট সফল হয়েছে!**\n━━━━━━━━━━━━━━━━━━━━\n\n📦 **Order ID:** `{order_id}`\n📘 **কোর্স:** {course_name}\n💰 **টাকা:** {amount} ৳\n\n⚠️ এই কোর্সের সরাসরি লিংক যুক্ত করা নেই। অ্যাডমিন আপনার অ্যাক্সেস নিশ্চিত করার পর গ্রুপ/চ্যানেল লিংক জানিয়ে দেওয়া হবে।"
+                    default_delivery = "🎉 **Your Course Purchase was Successful!**\n\n**Course:** {course_name}\n**Order ID:** `{order_id}`\n\n✅ **Payment completed successfully.**\n\n⚠️ No direct link is attached to this course. Please contact support."
 
             delivery_template = db.get_setting(template_key) or db.get_setting("delivery_message") or default_delivery
             cleaned_delivery, custom_kb = parse_inline_buttons(delivery_template)
-            user_notify = (
-                cleaned_delivery
-                .replace("{order_id}", format_order_id_display(order_id))
-                .replace("{course_name}", str(order.get('course_name', 'N/A')))
-                .replace("{amount}", str(order['amount']))
-                .replace("{access_text}", str(access_text))
-            )
+
+            c_name = str(order.get('course_name') or 'N/A')
+            o_id = format_order_id_display(order_id)
+            amt = str(order.get('amount', 0))
+            acc = str(access_text) if access_text else ""
+
+            user_notify = cleaned_delivery
+            for pat in ["${courseName}", "{courseName}", "${course_name}", "{course_name}"]:
+                user_notify = user_notify.replace(pat, c_name)
+            for pat in ["${orderId}", "{orderId}", "${order_id}", "{order_id}"]:
+                user_notify = user_notify.replace(pat, o_id)
+            for pat in ["${amount}", "{amount}"]:
+                user_notify = user_notify.replace(pat, amt)
+            for pat in ["${access_text}", "{access_text}", "${accessText}", "{accessText}"]:
+                user_notify = user_notify.replace(pat, acc)
 
             keyboard = []
             if checkout_type == "ebook":
@@ -7599,7 +7993,7 @@ Choose how you want to broadcast:
                         if c_obj and c_obj.get("access_link"):
                             dyn_link = await get_dynamic_access_link(context.bot, c_obj["access_link"], order["user_id"])
                             if dyn_link:
-                                keyboard.append([InlineKeyboardButton(f"🚀 {c_obj['name']}", url=dyn_link)])
+                                keyboard.append([InlineKeyboardButton(f"{c_obj['name']}", url=dyn_link)])
                 keyboard.append([InlineKeyboardButton("🎓 My Courses", callback_data="my_courses_nav")])
 
             if custom_kb:
@@ -7631,15 +8025,15 @@ Choose how you want to broadcast:
                     try:
                         await context.bot.send_message(
                             referrer_id,
-                            f"""🎁 <b>রেফারেল বোনাস অর্জিত হয়েছে!</b>
+                            f"""🎁 <b>Referral Bonus Earned!</b>
 ━━━━━━━━━━━━━━━━━━━━
-👤 আপনার রেফারেল লিংকে যুক্ত শিক্ষার্থী একটি পেইড কোর্স সফলভাবে ক্রয় করেছেন!
+👤 A student joined through your referral link has successfully purchased a course!
 
 📦 <b>Order ID:</b> <code>{format_order_id_display(order_id)}</code>
-💰 <b>অর্জিত বোনাস:</b> <code>+৳{reward_amt} BDT</code>
-💳 <b>বর্তমান ব্যালেন্স:</b> <code>৳{new_bal} BDT</code>
+💰 <b>Bonus Earned:</b> <code>+৳{reward_amt} BDT</code>
+💳 <b>Current Balance:</b> <code>৳{new_bal} BDT</code>
 
-💡 <i>আপনার ব্যালেন্স দিয়ে বটের যেকোনো কোর্স সরাসরি কিনতে পারবেন।</i>""",
+💡 <i>You can use your balance to purchase any course or e-book directly from the bot.</i>""",
                             parse_mode="HTML"
                         )
                     except Exception as e:

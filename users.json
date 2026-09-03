@@ -4,10 +4,15 @@
     "username": "",
     "full_name": "Infinity",
     "purchased_courses": [
-      "COURSE-1788262366"
+      "COURSE-1788262366",
+      "COURSE-1788158992",
+      "COURSE-1788192212",
+      "COURSE-1788169721",
+      "COURSE-1788286922",
+      "COURSE-1788283515"
     ],
     "purchased_ebooks": [],
-    "balance": 118,
+    "balance": 138,
     "earnings_enabled": true,
     "earnings_history": [
       {
@@ -15,10 +20,27 @@
         "coupon_code": "RB15",
         "order_id": "ORD-1005",
         "date": "2026-08-31 23:43:48.126415"
+      },
+      {
+        "amount": 20,
+        "coupon_code": "REFERRAL_BONUS",
+        "order_id": "ORD-1010",
+        "date": "2026-09-02 00:52:34.839548"
       }
     ],
-    "referral_count": 0,
-    "referred_users": [],
+    "referral_count": 1,
+    "referred_users": [
+      {
+        "user_id": 7135525721,
+        "username": "salman2ss",
+        "full_name": "Salman",
+        "joined_date": "2026-09-02 00:38:21.323094",
+        "converted": true,
+        "conversion_date": "2026-09-02 00:52:34.839508",
+        "course_name": "📙RMH Chemistry 1st paper | HSC-28",
+        "order_id": "ORD-1010"
+      }
+    ],
     "referred_by": null,
     "joined_date": "2026-08-31 01:27:09.151189",
     "access_links": {
@@ -97,13 +119,16 @@
     "joined_date": "2026-08-31 12:42:55.668310",
     "access_links": {
       "COURSE-1788158992": "https://t.me/+p8KOw5ezWIQyZDE1"
-    }
+    },
+    "referral_reward_claimed": false
   },
   "7439866781": {
     "user_id": 7439866781,
     "username": "Richemanak",
     "full_name": ")D Ri",
-    "purchased_courses": [],
+    "purchased_courses": [
+      "COURSE-1788413022"
+    ],
     "purchased_ebooks": [],
     "balance": 0,
     "earnings_enabled": false,
@@ -112,22 +137,48 @@
     "referred_users": [],
     "referred_by": null,
     "joined_date": "2026-09-01 12:57:48.609888",
-    "referral_reward_claimed": false
+    "referral_reward_claimed": false,
+    "access_links": {
+      "COURSE-1788413022": "https://t.me/+IIBZjHpRIak0N2Rl"
+    }
   },
   "1852477596": {
     "user_id": 1852477596,
     "username": "ShariourAhmed",
     "full_name": "{_Shariour Ahamed_}@",
-    "purchased_courses": [],
+    "purchased_courses": [
+      "COURSE-1788413022"
+    ],
     "purchased_ebooks": [],
-    "balance": 0,
+    "balance": 20,
     "earnings_enabled": false,
-    "earnings_history": [],
-    "referral_count": 0,
-    "referred_users": [],
+    "earnings_history": [
+      {
+        "amount": 20,
+        "coupon_code": "REFERRAL_BONUS",
+        "order_id": "ORD-1014",
+        "date": "2026-09-03 12:24:32.716591"
+      }
+    ],
+    "referral_count": 1,
+    "referred_users": [
+      {
+        "user_id": 7192726551,
+        "username": "bdwin00",
+        "full_name": "DK WIN BD",
+        "joined_date": "2026-09-03 12:22:24.589140",
+        "converted": true,
+        "conversion_date": "2026-09-03 12:24:32.716571",
+        "course_name": "Cps combo",
+        "order_id": "ORD-1014"
+      }
+    ],
     "referred_by": null,
     "referral_reward_claimed": false,
-    "joined_date": "2026-09-01 20:51:31.919793"
+    "joined_date": "2026-09-01 20:51:31.919793",
+    "access_links": {
+      "COURSE-1788413022": "https://t.me/+IIBZjHpRIak0N2Rl"
+    }
   },
   "7831629041": {
     "user_id": 7831629041,
@@ -143,5 +194,46 @@
     "referred_by": null,
     "referral_reward_claimed": false,
     "joined_date": "2026-09-01 22:41:03.918115"
+  },
+  "7135525721": {
+    "user_id": 7135525721,
+    "username": "salman2ss",
+    "full_name": "Salman",
+    "purchased_courses": [],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": 8319458917,
+    "referral_reward_claimed": true,
+    "joined_date": "2026-09-02 00:38:21.323168"
+  },
+  "999123456": {
+    "user_id": 999123456,
+    "username": "teststudent",
+    "full_name": "Test Student",
+    "balance": 50,
+    "referral_count": 5,
+    "purchased_courses": [],
+    "earnings_enabled": false
+  },
+  "7192726551": {
+    "user_id": 7192726551,
+    "username": "bdwin00",
+    "full_name": "DK WIN BD",
+    "purchased_courses": [
+      "COURSE-1788192212"
+    ],
+    "purchased_ebooks": [],
+    "balance": 0,
+    "earnings_enabled": false,
+    "earnings_history": [],
+    "referral_count": 0,
+    "referred_users": [],
+    "referred_by": 1852477596,
+    "referral_reward_claimed": true,
+    "joined_date": "2026-09-03 12:22:24.589176"
   }
 }

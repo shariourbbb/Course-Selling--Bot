@@ -506,6 +506,62 @@ class Database:
             return None
         return user.get("access_links", {}).get(course_id)
 
+    def is_user_authorized_for_chat(self, user_id: int, chat_id: int, invite_link: Optional[str] = None) -> bool:
+        if self.is_admin(user_id):
+            return True
+
+        uid = str(user_id)
+        user = self.users.get(uid)
+        if not user:
+            return False
+
+        # 1. Match against single-use links stored for user
+        user_links = user.get("access_links", {})
+        if invite_link:
+            clean_inv = str(invite_link).strip()
+            for stored_link in user_links.values():
+                if stored_link and str(stored_link).strip() == clean_inv:
+                    return True
+
+        # 2. Check purchased courses
+        purchased_ids = user.get("purchased_courses", [])
+        chat_id_str = str(chat_id)
+        for cid in purchased_ids:
+            course = self.get_course(cid)
+            if not course:
+                continue
+
+            # Direct chat ID / group ID match
+            c_chat = str(course.get("chat_id") or course.get("group_id") or "").strip()
+            if c_chat and c_chat == chat_id_str:
+                return True
+
+            c_link = str(course.get("access_link", "")).strip()
+            if invite_link and c_link and invite_link == c_link:
+                return True
+
+            if c_link and chat_id_str in c_link:
+                return True
+
+        # 3. Check approved orders
+        orders = self.get_user_orders(user_id)
+        for order in orders:
+            if order.get("status") == "approved":
+                target_courses = order.get("courses", [])
+                if not target_courses and order.get("course_id"):
+                    target_courses = [order["course_id"]]
+                for cid in target_courses:
+                    course = self.get_course(cid)
+                    if course:
+                        c_chat = str(course.get("chat_id") or course.get("group_id") or "").strip()
+                        if c_chat and c_chat == chat_id_str:
+                            return True
+                        c_link = str(course.get("access_link", "")).strip()
+                        if invite_link and c_link and invite_link == c_link:
+                            return True
+
+        return False
+
     def is_earnings_enabled(self, user_id: int) -> bool:
         user = self.get_user(user_id)
         if user:
@@ -561,8 +617,11 @@ class Database:
     def refund_balance(self, user_id: int, amount: int):
         uid = str(user_id)
         if uid in self.users:
-            self.users[uid]["balance"] = self.users[uid].get("balance", 0) + amount
+            self.users[uid]["balance"] = self.users[uid].get("balance", 0) + int(amount)
             self._save(self.users, USERS_DB)
+
+    def add_balance(self, user_id: int, amount: int):
+        self.refund_balance(user_id, amount)
 
     def is_purchased(self, user_id: int, course_id: str) -> bool:
         user = self.get_user(user_id)
@@ -1432,14 +1491,14 @@ class Database:
                 course["folder_path"] = new_path
                 segs = new_path.split(" > ")
                 course["category"] = segs[0] if len(segs) > 0 else ""
-                course["subcategory"] = segs[1] if len(segs) > 1 else ""
+                course["subcategory"] = " > ".join(segs[1:]) if len(segs) > 1 else ""
             elif c_fld.startswith(old_path + " > "):
                 suffix = c_fld[len(old_path):]
                 updated_fld = new_path + suffix
                 course["folder_path"] = updated_fld
                 segs = updated_fld.split(" > ")
                 course["category"] = segs[0] if len(segs) > 0 else ""
-                course["subcategory"] = segs[1] if len(segs) > 1 else ""
+                course["subcategory"] = " > ".join(segs[1:]) if len(segs) > 1 else ""
 
         self._save_raw(self.categories, CATEGORIES_DB)
         self._save(self.courses, COURSES_DB)
@@ -1474,7 +1533,7 @@ class Database:
         course["folder_path"] = new_folder
         segs = new_folder.split(" > ")
         course["category"] = segs[0] if len(segs) > 0 else ""
-        course["subcategory"] = segs[1] if len(segs) > 1 else ""
+        course["subcategory"] = " > ".join(segs[1:]) if len(segs) > 1 else ""
         self._save(self.courses, COURSES_DB)
         return True
 
@@ -1674,6 +1733,10 @@ class Database:
             return True
         return False
 
+    def is_in_cart(self, user_id: int, course_id: str) -> bool:
+        uid = str(user_id)
+        return uid in self.cart and course_id in self.cart.get(uid, [])
+
     def get_cart(self, user_id: int) -> List[dict]:
         uid = str(user_id)
         course_ids = self.cart.get(uid, [])
@@ -1834,6 +1897,14 @@ class Database:
 
         self._save(self.coupons, COUPONS_DB)
 
+    def set_coupon_per_user_limit(self, code: str, limit: int):
+        clean_code = code.upper().strip()
+        if clean_code in self.coupons:
+            self.coupons[clean_code]["per_user_limit"] = int(limit)
+            self._save(self.coupons, COUPONS_DB)
+            return True
+        return False
+
     def validate_coupon_advanced(
         self,
         code: str,
@@ -1863,10 +1934,15 @@ class Database:
             coupon["used_by"] = used_by
         user_uses = used_by.get(uid_str, 0)
         per_user_limit = coupon.get("per_user_limit", 1)
-        if user_uses >= per_user_limit:
-            if per_user_limit > 1:
-                return False, 0, f"Coupon already used (Max {per_user_limit} times).", None
-            return False, 0, "You have already used this coupon.", None
+        if per_user_limit is not None:
+            try:
+                p_lim = int(per_user_limit)
+            except (ValueError, TypeError):
+                p_lim = 1
+            if 0 < p_lim < 999999 and user_uses >= p_lim:
+                if p_lim > 1:
+                    return False, 0, f"Coupon already used (Max {p_lim} times).", None
+                return False, 0, "You have already used this coupon.", None
 
         min_p = coupon.get("min_purchase", 0)
         if min_p > 0 and purchase_amount < min_p:
@@ -2328,7 +2404,10 @@ class Database:
         return defaults
 
     def get_setting(self, key: str, default=None):
-        return self.settings.get(key, default)
+        val = self.settings.get(key)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            return default
+        return val
 
     def set_setting(self, key: str, value) -> bool:
         self.settings[key] = value
@@ -2357,3 +2436,352 @@ class Database:
         current = self.is_view_all_courses_enabled()
         self.set_setting("show_view_all_courses", not current)
         return not current
+
+    # ==================== ADVANCED INLINE BUTTONS MANAGEMENT ====================
+
+    def get_inline_buttons_config(self) -> dict:
+        config = self.get_setting("inline_buttons_config")
+        if not config or not isinstance(config, dict):
+            # Auto-migrate from home_keyboard_grid if exists
+            buttons = []
+            home_grid = self.get_setting("home_keyboard_grid")
+            if home_grid and isinstance(home_grid, list):
+                for r_idx, row in enumerate(home_grid):
+                    if isinstance(row, list):
+                        for c_idx, btn in enumerate(row):
+                            if isinstance(btn, dict):
+                                buttons.append({
+                                    "id": f"ibtn_home_{r_idx}_{c_idx}",
+                                    "text": btn.get("text", "Button"),
+                                    "action": btn.get("action", ""),
+                                    "target": "home",
+                                    "enabled": btn.get("enabled", True),
+                                    "row": r_idx,
+                                    "col": c_idx
+                                })
+            config = {
+                "master_enabled": True,
+                "section_status": {
+                    "home": True,
+                    "categories": True,
+                    "ebooks": True,
+                    "support": True,
+                    "delivery": True,
+                    "profile": True,
+                    "global": True
+                },
+                "buttons": buttons
+            }
+            self.set_setting("inline_buttons_config", config)
+        return config
+
+    def save_inline_buttons_config(self, config: dict) -> bool:
+        return self.set_setting("inline_buttons_config", config)
+
+    def is_inline_buttons_master_enabled(self) -> bool:
+        cfg = self.get_inline_buttons_config()
+        return cfg.get("master_enabled", True)
+
+    def toggle_inline_buttons_master(self) -> bool:
+        cfg = self.get_inline_buttons_config()
+        current = cfg.get("master_enabled", True)
+        cfg["master_enabled"] = not current
+        self.save_inline_buttons_config(cfg)
+        return not current
+
+    def is_inline_section_enabled(self, section: str) -> bool:
+        cfg = self.get_inline_buttons_config()
+        section_status = cfg.get("section_status", {})
+        return section_status.get(section, True)
+
+    def toggle_inline_section(self, section: str) -> bool:
+        cfg = self.get_inline_buttons_config()
+        if "section_status" not in cfg:
+            cfg["section_status"] = {}
+        current = cfg["section_status"].get(section, True)
+        cfg["section_status"][section] = not current
+        self.save_inline_buttons_config(cfg)
+        return not current
+
+    def get_inline_buttons(self, target_filter: Optional[str] = None) -> list[dict]:
+        cfg = self.get_inline_buttons_config()
+        buttons = cfg.get("buttons", [])
+        if target_filter:
+            return [b for b in buttons if b.get("target") == target_filter]
+        return buttons
+
+    def get_inline_button_by_id(self, button_id: str) -> Optional[dict]:
+        cfg = self.get_inline_buttons_config()
+        for b in cfg.get("buttons", []):
+            if b.get("id") == button_id:
+                return b
+        return None
+
+    def add_inline_button(self, text: str, action: str, target: str = "home", enabled: bool = True, row: Optional[int] = None, col: Optional[int] = None) -> dict:
+        cfg = self.get_inline_buttons_config()
+        if "buttons" not in cfg:
+            cfg["buttons"] = []
+        
+        target_buttons = [b for b in cfg["buttons"] if b.get("target") == target]
+        if row is None:
+            if target_buttons:
+                row = max(b.get("row", 0) for b in target_buttons) + 1
+            else:
+                row = 0
+        if col is None:
+            col = 0
+
+        import time
+        btn_id = f"ibtn_{int(time.time() * 1000)}_{len(cfg['buttons'])}"
+        new_btn = {
+            "id": btn_id,
+            "text": text.strip(),
+            "action": action.strip(),
+            "target": target,
+            "enabled": enabled,
+            "row": row,
+            "col": col
+        }
+        cfg["buttons"].append(new_btn)
+        self.save_inline_buttons_config(cfg)
+        return new_btn
+
+    def add_multiple_inline_buttons(self, button_pairs: list[tuple[str, str]], target: str = "home") -> int:
+        count = 0
+        for text, action in button_pairs:
+            if text and action:
+                self.add_inline_button(text=text, action=action, target=target, enabled=True)
+                count += 1
+        return count
+
+    def delete_inline_button(self, button_id: str) -> bool:
+        cfg = self.get_inline_buttons_config()
+        orig_len = len(cfg.get("buttons", []))
+        cfg["buttons"] = [b for b in cfg.get("buttons", []) if b.get("id") != button_id]
+        if len(cfg["buttons"]) < orig_len:
+            self.save_inline_buttons_config(cfg)
+            return True
+        return False
+
+    def delete_all_inline_buttons(self, target: Optional[str] = None) -> int:
+        cfg = self.get_inline_buttons_config()
+        if target:
+            deleted_count = sum(1 for b in cfg.get("buttons", []) if b.get("target") == target)
+            cfg["buttons"] = [b for b in cfg.get("buttons", []) if b.get("target") != target]
+        else:
+            deleted_count = len(cfg.get("buttons", []))
+            cfg["buttons"] = []
+        self.save_inline_buttons_config(cfg)
+        return deleted_count
+
+    def update_inline_button(self, button_id: str, updates: dict) -> bool:
+        cfg = self.get_inline_buttons_config()
+        for b in cfg.get("buttons", []):
+            if b.get("id") == button_id:
+                b.update(updates)
+                self.save_inline_buttons_config(cfg)
+                return True
+        return False
+
+    def move_inline_button_target(self, button_id: str, new_target: str) -> bool:
+        return self.update_inline_button(button_id, {"target": new_target})
+
+    def toggle_inline_button_status(self, button_id: str) -> Optional[bool]:
+        btn = self.get_inline_button_by_id(button_id)
+        if not btn:
+            return None
+        new_status = not btn.get("enabled", True)
+        self.update_inline_button(button_id, {"enabled": new_status})
+        return new_status
+
+    def move_inline_button_position(self, button_id: str, direction: str) -> bool:
+        cfg = self.get_inline_buttons_config()
+        buttons = cfg.get("buttons", [])
+        idx = next((i for i, b in enumerate(buttons) if b.get("id") == button_id), -1)
+        if idx == -1:
+            return False
+        
+        target = buttons[idx].get("target")
+        same_target_indices = [i for i, b in enumerate(buttons) if b.get("target") == target]
+        curr_pos = same_target_indices.index(idx)
+        
+        if direction == "up":
+            if curr_pos == 0:
+                return False
+            prev_idx = same_target_indices[curr_pos - 1]
+            buttons[idx], buttons[prev_idx] = buttons[prev_idx], buttons[idx]
+        elif direction == "down":
+            if curr_pos == len(same_target_indices) - 1:
+                return False
+            next_idx = same_target_indices[curr_pos + 1]
+            buttons[idx], buttons[next_idx] = buttons[next_idx], buttons[idx]
+        else:
+            return False
+
+        self.save_inline_buttons_config(cfg)
+        return True
+
+    def get_active_inline_buttons_for_target(self, target: str, specific_cat: Optional[str] = None) -> list[dict]:
+        if not self.is_inline_buttons_master_enabled():
+            return []
+        
+        base_section = target.split(":")[0] if ":" in target else target
+        if not self.is_inline_section_enabled(base_section):
+            return []
+
+        cfg = self.get_inline_buttons_config()
+        result = []
+        
+        for b in cfg.get("buttons", []):
+            if b.get("enabled", True):
+                b_target = b.get("target", "")
+                if b_target == target:
+                    result.append(b)
+                elif specific_cat and b_target == f"cat:{specific_cat}":
+                    result.append(b)
+                elif target != "global" and b_target == "global":
+                    result.append(b)
+        return result
+
+    # ==================== INFO & HELP MENU SETTINGS ====================
+
+    def get_info_settings(self) -> dict:
+        cfg = self.get_setting("info_menu_settings")
+        if not cfg or not isinstance(cfg, dict):
+            header = self.get_setting("info_message", "Help🤠\n\nSelect an option below for purchasing guides, general questions, or direct support:")
+            cfg = {
+                "header_text": header,
+                "items": {
+                    "contact": {
+                        "label": "💬 Contact Support",
+                        "enabled": True,
+                        "type": "contact",
+                        "content": ""
+                    },
+                    "how_to_buy": {
+                        "label": "📖 How to Buy",
+                        "enabled": True,
+                        "type": "text",
+                        "content": ""
+                    },
+                    "about": {
+                        "label": "🎓 About StudyMart",
+                        "enabled": True,
+                        "type": "text",
+                        "content": ""
+                    },
+                    "terms": {
+                        "label": "📜 Terms & Policy",
+                        "enabled": True,
+                        "type": "text",
+                        "content": ""
+                    }
+                },
+                "custom_buttons": []
+            }
+            self.set_setting("info_menu_settings", cfg)
+        return cfg
+
+    def save_info_settings(self, cfg: dict) -> bool:
+        return self.set_setting("info_menu_settings", cfg)
+
+    def set_info_header_text(self, text: str) -> bool:
+        cfg = self.get_info_settings()
+        cfg["header_text"] = text.strip()
+        self.set_setting("info_message", text.strip())
+        return self.save_info_settings(cfg)
+
+    def update_info_item(self, item_key: str, label: Optional[str] = None, content: Optional[str] = None, enabled: Optional[bool] = None) -> bool:
+        cfg = self.get_info_settings()
+        if "items" not in cfg:
+            cfg["items"] = {}
+        if item_key not in cfg["items"]:
+            cfg["items"][item_key] = {"label": item_key, "enabled": True, "type": "text", "content": ""}
+
+        if label is not None:
+            cfg["items"][item_key]["label"] = label.strip()
+        if content is not None:
+            cfg["items"][item_key]["content"] = content.strip()
+        if enabled is not None:
+            cfg["items"][item_key]["enabled"] = bool(enabled)
+
+        return self.save_info_settings(cfg)
+
+    def toggle_info_item_status(self, item_key: str) -> bool:
+        cfg = self.get_info_settings()
+        if "items" not in cfg:
+            cfg["items"] = {}
+        cur = cfg["items"].get(item_key, {}).get("enabled", True)
+        new_val = not cur
+        self.update_info_item(item_key, enabled=new_val)
+        return new_val
+
+    def reset_info_item(self, item_key: str) -> bool:
+        cfg = self.get_info_settings()
+        if "items" in cfg and item_key in cfg["items"]:
+            cfg["items"][item_key]["content"] = ""
+            defaults = {
+                "contact": "💬 Contact Support",
+                "how_to_buy": "📖 How to Buy",
+                "about": "🎓 About StudyMart",
+                "terms": "📜 Terms & Policy"
+            }
+            if item_key in defaults:
+                cfg["items"][item_key]["label"] = defaults[item_key]
+            return self.save_info_settings(cfg)
+        return False
+
+    def add_custom_info_button(self, label: str, btn_type: str, content: str) -> str:
+        cfg = self.get_info_settings()
+        if "custom_buttons" not in cfg:
+            cfg["custom_buttons"] = []
+
+        new_id = f"cinfo_{len(cfg['custom_buttons']) + 1}_{int(datetime.now().timestamp())}"
+        cfg["custom_buttons"].append({
+            "id": new_id,
+            "label": label.strip(),
+            "type": btn_type.strip().lower(),
+            "content": content.strip(),
+            "enabled": True
+        })
+        self.save_info_settings(cfg)
+        return new_id
+
+    def delete_custom_info_button(self, btn_id: str) -> bool:
+        cfg = self.get_info_settings()
+        if "custom_buttons" in cfg:
+            orig_len = len(cfg["custom_buttons"])
+            cfg["custom_buttons"] = [b for b in cfg["custom_buttons"] if b.get("id") != btn_id]
+            if len(cfg["custom_buttons"]) < orig_len:
+                return self.save_info_settings(cfg)
+        return False
+
+    def toggle_custom_info_button(self, btn_id: str) -> bool:
+        cfg = self.get_info_settings()
+        for b in cfg.get("custom_buttons", []):
+            if b.get("id") == btn_id:
+                b["enabled"] = not b.get("enabled", True)
+                self.save_info_settings(cfg)
+                return b["enabled"]
+        return False
+
+    def get_custom_info_button(self, btn_id: str) -> Optional[dict]:
+        cfg = self.get_info_settings()
+        for b in cfg.get("custom_buttons", []):
+            if b.get("id") == btn_id:
+                return dict(b)
+        return None
+
+    def update_custom_info_button(self, btn_id: str, label: Optional[str] = None, content: Optional[str] = None, btn_type: Optional[str] = None) -> bool:
+        cfg = self.get_info_settings()
+        for b in cfg.get("custom_buttons", []):
+            if b.get("id") == btn_id:
+                if label is not None:
+                    b["label"] = label.strip()
+                if content is not None:
+                    b["content"] = content.strip()
+                if btn_type is not None:
+                    b["type"] = btn_type.strip().lower()
+                return self.save_info_settings(cfg)
+        return False
+
