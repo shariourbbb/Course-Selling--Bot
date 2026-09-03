@@ -3823,7 +3823,7 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
 <blockquote>📚 <b>Courses ({len(courses)}):</b>
 {course_list_str}</blockquote>
 
-<blockquote>💡 <b>নিচের বাটন চেপে ক্যাটাগরি অন/অফ, নতুন কোর্স বা সাব-ফোল্ডার পরিচালনা করুন:</b></blockquote>"""
+<blockquote>💡 <b>Click below to manage categories, courses, and sub-folders:</b></blockquote>"""
 
     if query.message.photo:
         try:
@@ -6601,12 +6601,12 @@ Choose how you want to broadcast:
         context.user_data["admin_subcat_target_parent"] = active_dir
         parent_display = active_dir if active_dir else "Root (মূল ক্যাটাগরি)"
         
-        msg = f"""📁 **ফোল্ডার অবস্থান:** `{parent_display}`
+        msg = f"""📁 **Folder Location:** `{parent_display}`
 ━━━━━━━━━━━━━━━━━━━━
-➕ **নতুন ফোল্ডারের নাম লিখে পাঠান:**
-(যেমন: Physics, Chemistry, Cycle 1, Academic ইত্যাদি)
+➕ **Enter new Folder name:**
+(Example: Physics, Chemistry, Cycle 1, Academic )
 
-(বাতিল করতে /cancel লিখুন)"""
+(Cancel by typing /cancel)"""
         k_c = [[InlineKeyboardButton("« Cancel", callback_data=f"adm_dir_{active_dir}")]]
         if query.message.photo:
             try:

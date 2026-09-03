@@ -2,16 +2,8 @@
   "buttons": [
     [
       {
-        "text": "HSC 26",
-        "action": "cat_HSC 26"
-      },
-      {
-        "text": "HSC 27",
-        "action": "cat_HSC 27"
-      },
-      {
-        "text": "HSC 28",
-        "action": "cat_HSC 28"
+        "text": "SSC",
+        "action": "cat_📚 SSC"
       }
     ],
     [
