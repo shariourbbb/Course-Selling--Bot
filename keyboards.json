@@ -6,11 +6,6 @@
         "action": "cat_HSC 26"
       },
       {
-        "text": "BGS",
-        "action": "cat_HSC 28",
-        "admin_only": true
-      },
-      {
         "text": "HSC 27",
         "action": "cat_HSC 27"
       },

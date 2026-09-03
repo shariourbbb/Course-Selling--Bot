@@ -2614,6 +2614,13 @@ async def handle_user_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cancel_cmd(update, context)
         return
 
+    # Category names such as "HSC 28" may also match a user-facing menu button.
+    # Handle the pending admin folder input before menu-button detection so that a
+    # new category is created instead of opening the public HSC 28 browse screen.
+    if context.user_data.get("admin_add_subcat"):
+        await handle_admin_subcategory_creation(update, context)
+        return
+
     # Cancel any active wizard if a menu command or button is pressed
     if text:
         is_command = text.startswith("/")
@@ -3769,14 +3776,7 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
 
     # 3. Contextual Actions (Add Course & Add Sub-Folder)
     if not clean_path:
-        keyboard.append([
-            InlineKeyboardButton("➕ Add Category", callback_data="adm_fld_addfolder"),
-            InlineKeyboardButton("➕ Add New Course", callback_data="adm_add_course")
-        ])
-        if len(subfolders) > 1:
-            keyboard.append([
-                InlineKeyboardButton("🔀 Reorder Categories", callback_data="adm_fld_reorder_")
-            ])
+        keyboard.append([InlineKeyboardButton("➕ Add Category", callback_data="adm_fld_addfolder")])
         keyboard.append([InlineKeyboardButton("« Admin Menu", callback_data="adm_main")])
 
         sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_category_active(s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_courses_by_folder(s, include_inactive=True)) or len(db.get_sub_folders(s, include_inactive=True))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো ক্যাটাগরি নেই)</i>"
@@ -3785,32 +3785,14 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
 <blockquote>📂 <b>Categories ({len(subfolders)}):</b>
 {sub_list_str}</blockquote>
 
-<blockquote>💡 <b>প্রতিটি ক্যাটাগরিতে ঢুকে সাব-ফোল্ডার, অন/অফ (Status Toggle) বা সরাসরি কোর্স যুক্ত করতে পারেন।</b></blockquote>"""
+<blockquote>💡 <b>Inside a category: Add sub-folders, toggle status, or add courses </b></blockquote>"""
     else:
         keyboard.append([
             InlineKeyboardButton("➕ Add Course", callback_data="adm_fld_addcourse"),
             InlineKeyboardButton("➕ Add Sub-Folder", callback_data="adm_fld_addfolder")
         ])
 
-        siblings = db.get_sub_folders(parent_path, include_inactive=True)
         cur_pos_str = ""
-        if current_name in siblings:
-            cur_pos_str = f"\n🔢 <b>Position:</b> #{siblings.index(current_name) + 1} of {len(siblings)}"
-
-        # Clean Move buttons with clear labels
-        move_row = [
-            InlineKeyboardButton("⬆️ Move Up", callback_data=f"adm_fld_moveup_{current_name}"),
-            InlineKeyboardButton("⬇️ Move Down", callback_data=f"adm_fld_movedown_{current_name}")
-        ]
-        keyboard.append(move_row)
-
-        nest_row = []
-        if len(segments) > 1:
-            nest_row.append(InlineKeyboardButton("⬅️ Move Out (Parent)", callback_data=f"adm_fld_mleft_{current_name}"))
-        if len(siblings) > 1:
-            nest_row.append(InlineKeyboardButton("➡️ Move In (Sub-Folder)", callback_data=f"adm_fld_mright_{current_name}"))
-        if nest_row:
-            keyboard.append(nest_row)
 
         is_active = db.is_category_active(clean_path)
         status_toggle_btn = InlineKeyboardButton(f"🔄 Status: {'🟢 Active (ON)' if is_active else '🔴 Inactive (OFF)'}", callback_data=f"adm_fld_togglestatus_{current_name}")
@@ -3829,8 +3811,8 @@ async def render_admin_folder_directory(query, context: ContextTypes.DEFAULT_TYP
 
         path_display = html.escape(" ➔ ".join(segments))
         status_display = "🟢 <b>Active (ON)</b>" if is_active else "🔴 <b>Inactive (OFF - Hidden from students)</b>"
-        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_category_active(clean_path + ' > ' + s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_courses_by_folder(clean_path + ' > ' + s, include_inactive=True)) or len(db.get_sub_folders(clean_path + ' > ' + s, include_inactive=True))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো সাব-ফোল্ডার নেই)</i>"
-        course_list_str = "\n".join([f"  • {'[DISABLED] ' if c.get('status') == 'inactive' else ''}<b>{html.escape(c['name'])}</b> ➔ <code>৳{c.get('price', 0)}</code>" for c in courses]) if courses else "  <i>(এই ফোল্ডারে এখনো কোনো কোর্স নেই)</i>"
+        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_category_active(clean_path + ' > ' + s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_courses_by_folder(clean_path + ' > ' + s, include_inactive=True)) or len(db.get_sub_folders(clean_path + ' > ' + s, include_inactive=True))} items)</i>" for s in subfolders]) if subfolders else "  <i>(No Sub-Folders)</i>"
+        course_list_str = "\n".join([f"  • {'[DISABLED] ' if c.get('status') == 'inactive' else ''}<b>{html.escape(c['name'])}</b> ➔ <code>৳{c.get('price', 0)}</code>" for c in courses]) if courses else "  <i>(No Courses in this folder)</i>"
 
         msg = f"""<blockquote>📁 <b>[ Directory: <code>{path_display}</code> ]</b>
 📌 <b>Visibility / Status:</b> {status_display}{cur_pos_str}</blockquote>
@@ -3942,7 +3924,7 @@ async def render_admin_ebook_folder_directory(query, context: ContextTypes.DEFAU
 
         path_display = html.escape(" ➔ ".join(segments))
         status_display = "🟢 <b>Active (ON)</b>" if is_active else "🔴 <b>Inactive (OFF - Hidden from students)</b>"
-        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_ebook_category_active(clean_path + ' > ' + s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_ebooks_by_folder(clean_path + ' > ' + s, include_inactive=True)) or len(db.get_ebook_sub_folders(clean_path + ' > ' + s))} items)</i>" for s in subfolders]) if subfolders else "  <i>(কোনো সাব-ফোল্ডার নেই)</i>"
+        sub_list_str = "\n".join([f"  📁 {'🔴 [OFF] ' if not db.is_ebook_category_active(clean_path + ' > ' + s) else ''}<b>{html.escape(s)}</b> <i>({len(db.get_ebooks_by_folder(clean_path + ' > ' + s, include_inactive=True)) or len(db.get_ebook_sub_folders(clean_path + ' > ' + s))} items)</i>" for s in subfolders]) if subfolders else "  <i>(No Sub-Folders)</i>"
         ebook_list_str = "\n".join([f"  • {'[DISABLED] ' if eb.get('status') == 'inactive' else ''}<b>{html.escape(eb['name'])}</b> ➔ <code>৳{eb.get('price', 0)}</code>" for eb in ebooks]) if ebooks else "  <i>(এই ফোল্ডারে এখনো কোনো ই-বুক নেই)</i>"
 
         msg = f"""<blockquote>📁 <b>[ E-Book Directory: <code>{path_display}</code> ]</b>
@@ -4436,7 +4418,7 @@ Choose what you want to edit:"""
 
     keyboard = [
         [InlineKeyboardButton("✏️ Edit Text", callback_data="adm_hbtn_edt_text"), InlineKeyboardButton("🔗 Edit Action", callback_data="adm_hbtn_edt_action")],
-        [InlineKeyboardButton("🔄 Toggle ON/OFF", callback_data="adm_hbtn_edt_toggle")],
+        [InlineKeyboardButton("↔️ Move Position", callback_data="adm_hbtn_edt_move"), InlineKeyboardButton("🔄 Toggle ON/OFF", callback_data="adm_hbtn_edt_toggle")],
         [InlineKeyboardButton("« Home Buttons Settings", callback_data="adm_home_buttons")]
     ]
     await query.edit_message_text(msg, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -4449,7 +4431,9 @@ def check_admin_callback_permission(user_id: int, data: str) -> tuple[bool, str]
     # Course management
     if (data.startswith("adm_course") or data.startswith("adm_dir_") or 
         data.startswith("adm_fld_addcourse") or data.startswith("adm_list_courses") or 
-        data.startswith("adm_edit_") or data.startswith("adm_pub_course") or 
+        data.startswith("adm_edit_") or data.startswith("adm_edmenu_") or
+        data.startswith("adm_delcourse_") or data.startswith("edprop_") or
+        data.startswith("adm_pub_course") or
         data.startswith("adm_cancel_course") or data.startswith("adm_skip_")):
         if not db.has_permission(user_id, "course_manage"):
             return False, "Course Management"
@@ -4863,6 +4847,89 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Cancel", callback_data="adm_home_buttons")]])
         )
+        return
+
+    elif data == "adm_hbtn_edt_move":
+        coords = context.user_data.get("admin_edit_hbtn_coords")
+        if not coords:
+            await query.answer("Button selection expired. Please select it again.", show_alert=True)
+            await render_home_buttons_panel(query)
+            return
+        r_idx, c_idx = coords
+        grid = get_home_keyboard_grid()
+        if r_idx >= len(grid) or c_idx >= len(grid[r_idx]):
+            await query.answer("Button not found. Please select it again.", show_alert=True)
+            await render_home_buttons_panel(query)
+            return
+
+        await query.edit_message_text(
+            "🔀 <b>Move Button Position</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Choose where to move this button. The change is saved instantly.",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⬅️ Left", callback_data="adm_hbtn_edmove_left"), InlineKeyboardButton("➡️ Right", callback_data="adm_hbtn_edmove_right")],
+                [InlineKeyboardButton("⬆️ Up", callback_data="adm_hbtn_edmove_up"), InlineKeyboardButton("⬇️ Down", callback_data="adm_hbtn_edmove_down")],
+                [InlineKeyboardButton("« Back", callback_data=f"adm_hbtn_edit_select_{r_idx}_{c_idx}")]
+            ])
+        )
+        return
+
+    elif data.startswith("adm_hbtn_edmove_"):
+        direction = data.replace("adm_hbtn_edmove_", "")
+        coords = context.user_data.get("admin_edit_hbtn_coords")
+        grid = get_home_keyboard_grid()
+        if not coords:
+            await query.answer("Button selection expired. Please select it again.", show_alert=True)
+            await render_home_buttons_panel(query)
+            return
+
+        r_idx, c_idx = coords
+        if r_idx >= len(grid) or c_idx >= len(grid[r_idx]):
+            await query.answer("Button not found. Please select it again.", show_alert=True)
+            await render_home_buttons_panel(query)
+            return
+
+        button = grid[r_idx][c_idx]
+        moved = False
+        if direction == "left" and c_idx > 0:
+            grid[r_idx][c_idx], grid[r_idx][c_idx - 1] = grid[r_idx][c_idx - 1], grid[r_idx][c_idx]
+            c_idx -= 1
+            moved = True
+        elif direction == "right" and c_idx < len(grid[r_idx]) - 1:
+            grid[r_idx][c_idx], grid[r_idx][c_idx + 1] = grid[r_idx][c_idx + 1], grid[r_idx][c_idx]
+            c_idx += 1
+            moved = True
+        elif direction == "up" and r_idx > 0:
+            del grid[r_idx][c_idx]
+            if not grid[r_idx]:
+                del grid[r_idx]
+                r_idx -= 1
+            else:
+                r_idx -= 1
+            c_idx = min(c_idx, len(grid[r_idx]))
+            grid[r_idx].insert(c_idx, button)
+            moved = True
+        elif direction == "down" and r_idx < len(grid) - 1:
+            del grid[r_idx][c_idx]
+            if not grid[r_idx]:
+                del grid[r_idx]
+                target_row = r_idx
+            else:
+                target_row = r_idx + 1
+            r_idx = target_row
+            c_idx = min(c_idx, len(grid[r_idx]))
+            grid[r_idx].insert(c_idx, button)
+            moved = True
+
+        if not moved:
+            edge = {"left": "left", "right": "right", "up": "top", "down": "bottom"}.get(direction, "selected")
+            await query.answer(f"Already at the {edge} position!", show_alert=True)
+        else:
+            db.set_setting("home_keyboard_grid", grid)
+            context.user_data["admin_edit_hbtn_coords"] = (r_idx, c_idx)
+            await query.answer("✅ Button position updated!")
+
+        await render_hbtn_edit_panel(query, context, r_idx, c_idx)
         return
 
     elif data == "adm_hbtn_edt_toggle":
@@ -6573,13 +6640,14 @@ Choose how you want to broadcast:
         }
 
         path_disp = active_dir if active_dir else "General"
-        msg = f"""📁 **ডিরেক্টরি: `{path_disp}`**
+        msg = f"""📁 **Folder:** `{path_disp}`
 ━━━━━━━━━━━━━━━━━━━━
 
-✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: BH Biology Full Course | {cat})
+**Step 1 of 4 — Course Name**
+Send the course name.
 
-💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।"""
+Example: `BH Biology Full Course | {cat}`
+The course will be added to this folder."""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{active_dir}")]]
         if query.message.photo:
             try:
@@ -6611,13 +6679,14 @@ Choose how you want to broadcast:
             "program": segments[-1].lower() if segments else "general"
         }
 
-        msg = f"""📁 **ডিরেক্টরি: `{target_path}`**
+        msg = f"""📁 **Folder:** `{target_path}`
 ━━━━━━━━━━━━━━━━━━━━
 
-✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: BH Biology Full Course | {cat})
+**Step 1 of 4 — Course Name**
+Send the course name.
 
-💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{target_path}` ডিরেক্টরিতে সেট করা থাকবে।"""
+Example: `BH Biology Full Course | {cat}`
+The course will be added to this folder."""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{target_path}")]]
         if query.message.photo:
             try:
@@ -6640,13 +6709,14 @@ Choose how you want to broadcast:
             "program": "general"
         }
 
-        msg = f"""📁 **ডিরেক্টরি: `{cat}`**
+        msg = f"""📁 **Folder:** `{cat}`
 ━━━━━━━━━━━━━━━━━━━━
 
-✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: BH Biology Full Course | {cat})
+**Step 1 of 4 — Course Name**
+Send the course name.
 
-💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{cat}` ডিরেক্টরিতে সেট করা থাকবে।"""
+Example: `BH Biology Full Course | {cat}`
+The course will be added to this folder."""
         k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{cat}")]]
 
         if query.message.photo:
@@ -6869,13 +6939,14 @@ Choose how you want to broadcast:
             }
 
             path_disp = active_dir
-            msg = f"""📁 **ডিরেক্টরি: `{path_disp}`**
+            msg = f"""📁 **Folder:** `{path_disp}`
 ━━━━━━━━━━━━━━━━━━━━
 
-✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: BH Biology Full Course | {cat})
+**Step 1 of 4 — Course Name**
+Send the course name.
 
-💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{path_disp}` ডিরেক্টরিতে সেট করা থাকবে।"""
+Example: `BH Biology Full Course | {cat}`
+The course will be added to this folder."""
             k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{active_dir}")]]
             if query.message.photo:
                 try:
@@ -7213,19 +7284,20 @@ Choose how you want to broadcast:
             context.user_data["course_step"] = "name"
             fld = new_course.get("folder_path", "General")
             cat = new_course.get("category", "General")
-            msg = f"""📁 **ডিরেক্টরি: `{fld}`**
+            msg = f"""📁 **Folder:** `{fld}`
 ━━━━━━━━━━━━━━━━━━━━
 
-✨ **ধাপ ১/৪: কোর্সের নাম (Course Name) লিখে পাঠান:**
-(যেমন: BH Biology Full Course | {cat})
+**Step 1 of 4 — Course Name**
+Send the course name.
 
-💡 ক্যাটাগরি ও ফোল্ডার স্বয়ংক্রিয়ভাবে `{fld}` ডিরেক্টরিতে সেট করা থাকবে।"""
+Example: `BH Biology Full Course | {cat}`
+The course will be added to this folder."""
             k_cancel = [[InlineKeyboardButton("✕ Cancel", callback_data=f"adm_dir_{fld}")]]
             await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(k_cancel))
             
         elif step == "description":
             context.user_data["course_step"] = "price"
-            p_price = f"📖 কোর্সের নাম: **{new_course.get('name', '')}**\n\n💰 **ধাপ ২/৪: কোর্সের মূল্য লিখুন (Price in BDT):**\n\n(যেমন: 400 বা ফ্রি কোর্সের জন্য 0 লিখুন)"
+            p_price = f"📘 **Course:** {new_course.get('name', '')}\n\n**Step 2 of 4 — Price (BDT)**\nSend the price as a number. Send `0` for a free course."
             keyboard = [
                 [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
             ]
@@ -7235,7 +7307,7 @@ Choose how you want to broadcast:
             context.user_data["course_step"] = "description"
             price_val = new_course.get('price', 0)
             price_tag = f"৳{price_val}" if price_val > 0 else "বিনামূল্যে (Free) 🎁"
-            p_desc = f"💰 মূল্য: **{price_tag}**\n\n📝 **ধাপ ৩/৪: কোর্সের বিস্তারিত বিবরণ (Description) লিখুন:**\n\n💡 শিক্ষক প্যানেল, সিলেবাস এবং কোর্সের বিস্তারিত ফিচার্স লিখুন (একাধিক লাইনে লিখতে পারেন):"
+            p_desc = f"💰 **Price:** {price_tag}\n\n**Step 3 of 4 — Description**\nSend a short course description. You can write multiple lines."
             keyboard = [
                 [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
             ]
@@ -7244,11 +7316,10 @@ Choose how you want to broadcast:
         elif step == "image":
             context.user_data["course_step"] = "link"
             fld = new_course.get("folder_path", "General")
-            p_text = f"""📁 **ডিরেক্টরি:** `{fld}`
+            p_text = f"""📁 **Folder:** `{fld}`
 ━━━━━━━━━━━━━━━━━━━━
-🔗 **ধাপ ৪/৪: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
-
-💡 লিংক না থাকলে বা পরে দিতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
+**Step 4 of 4 — Access Link**
+Send the Telegram or Drive link, or tap **Skip Link** to add it later."""
             keyboard = [
                 [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Link", callback_data="adm_skip_link")],
                 [InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
@@ -7297,6 +7368,54 @@ Choose how you want to broadcast:
         else:
             await query.answer("❌ Error cloning course!", show_alert=True)
 
+    elif data.startswith("adm_delcourse_confirm_"):
+        cid = data.replace("adm_delcourse_confirm_", "")
+        course = db.get_course(cid)
+        if not course:
+            await query.answer("❌ Course not found (it may already be deleted).", show_alert=True)
+            return
+
+        # Keep the actual folder before removing the course, so the admin returns to
+        # the same directory after a successful delete.
+        folder_path = str(course.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ")
+        if not folder_path:
+            category = str(course.get("category", "")).strip()
+            subcategory = str(course.get("subcategory", "")).strip()
+            folder_path = category if not subcategory or subcategory.lower() == "general" else f"{category} > {subcategory}"
+
+        if db.delete_course(cid):
+            await query.answer("✅ Course deleted successfully!", show_alert=True)
+            await render_admin_folder_directory(query, context, folder_path)
+        else:
+            await query.answer("❌ Could not delete this course. Please try again.", show_alert=True)
+
+    elif data.startswith("adm_delcourse_"):
+        cid = data.replace("adm_delcourse_", "")
+        course = db.get_course(cid)
+        if not course:
+            await query.answer("❌ Course not found (it may already be deleted).", show_alert=True)
+            return
+
+        confirm_text = (
+            f"🗑️ <b>Delete course?</b>\n\n"
+            f"<b>{html.escape(str(course.get('name', 'Untitled course')))}</b> will be permanently removed.\n"
+            "This cannot be undone."
+        )
+        confirm_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, Delete", callback_data=f"adm_delcourse_confirm_{cid}")],
+            [InlineKeyboardButton("« Cancel", callback_data=f"adm_edit_{cid}")]
+        ])
+        # A course with a banner is displayed as a photo caption. Telegram cannot
+        # edit that message as plain text, so replace it with a text confirmation.
+        if query.message.photo:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.message.reply_text(confirm_text, parse_mode="HTML", reply_markup=confirm_keyboard)
+        else:
+            await query.edit_message_text(confirm_text, parse_mode="HTML", reply_markup=confirm_keyboard)
+
     elif data.startswith("adm_course_mup_"):
         cid = data.replace("adm_course_mup_", "")
         success = db.move_course_order(cid, "up")
@@ -7304,7 +7423,7 @@ Choose how you want to broadcast:
             await query.answer("⬆️ Moved Up successfully!")
             await show_course_edit_dashboard(query, cid, "⬆️ **Moved Course Up**\n")
         else:
-            await query.answer("⚠️ Already at the top of insertion order!", show_alert=True)
+            await query.answer("⚠️ This course is already first in this folder!", show_alert=True)
 
     elif data.startswith("adm_course_mdown_"):
         cid = data.replace("adm_course_mdown_", "")
@@ -7313,7 +7432,7 @@ Choose how you want to broadcast:
             await query.answer("⬇️ Moved Down successfully!")
             await show_course_edit_dashboard(query, cid, "⬇️ **Moved Course Down**\n")
         else:
-            await query.answer("⚠️ Already at the bottom of insertion order!", show_alert=True)
+            await query.answer("⚠️ This course is already last in this folder!", show_alert=True)
 
     elif data.startswith("adm_course_mleft_"):
         cid = data.replace("adm_course_mleft_", "")
@@ -9364,6 +9483,11 @@ async def show_course_edit_dashboard(query, course_id: str, notice: str = ""):
     has_img = "Yes ✅" if course.get("image") else "No ❌"
     status_tag = "🔴 Disabled (Hidden from Students)" if course.get("status") == "inactive" else "🟢 Enabled (Visible to Students)"
     toggle_label = "🟢 Enable Course" if course.get("status") == "inactive" else "🔴 Disable Course"
+    folder_path = str(course.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ")
+    if not folder_path:
+        category = str(course.get("category", "")).strip()
+        subcategory = str(course.get("subcategory", "")).strip()
+        folder_path = category if not subcategory or subcategory.lower() == "general" else f"{category} > {subcategory}"
 
     msg = f"""{notice}📖 **Course Details & Management**
 ━━━━━━━━━━━━━━━━━━━━
@@ -9392,15 +9516,9 @@ async def show_course_edit_dashboard(query, course_id: str, notice: str = ""):
         ],
         [
             InlineKeyboardButton("📋 Copy (Clone)", callback_data=f"adm_course_clone_{course_id}"),
-            InlineKeyboardButton("✕ Delete", callback_data=f"adm_delcourse_{course_id}")
+            InlineKeyboardButton("🗑️ Delete Course", callback_data=f"adm_delcourse_{course_id}")
         ],
-        [
-            InlineKeyboardButton("⬅️", callback_data=f"adm_course_mleft_{course_id}"),
-            InlineKeyboardButton("⬆️", callback_data=f"adm_course_mup_{course_id}"),
-            InlineKeyboardButton("⬇️", callback_data=f"adm_course_mdown_{course_id}"),
-            InlineKeyboardButton("➡️", callback_data=f"adm_course_mright_{course_id}")
-        ],
-        [InlineKeyboardButton("« Back to Folder", callback_data=f"adm_dir_{course.get('category', '')} > {course.get('subcategory', '')}")]
+        [InlineKeyboardButton("« Back to Folder", callback_data=f"adm_dir_{folder_path}")]
     ]
 
     image = course.get("image")
@@ -9469,22 +9587,36 @@ async def handle_admin_subcategory_creation(update: Update, context: ContextType
     added = db.add_sub_folder(parent, text)
     new_path = f"{parent} > {text}" if parent else text
     if added:
-        keyboard = [
-            [InlineKeyboardButton(f"📁 Open '{text}' Folder", callback_data=f"adm_dir_{new_path}")],
-            [InlineKeyboardButton(f"➕ Add Course in '{text}'", callback_data=f"adm_addcourse_dir_{new_path}")],
-            [InlineKeyboardButton(f"➕ Add Another Sub-Folder in '{parent or 'Root'}'", callback_data=f"adm_addsub_{parent}")],
-            [InlineKeyboardButton(f"« Back to '{parent or 'All Categories'}'", callback_data=f"adm_dir_{parent}")]
-        ]
         await update.message.reply_text(
-            f"✅ **New Folder '{text}' created successfully!**\n\n📁 **Location:** `{new_path}`",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            f"✅ **Category added successfully:** `{text}`\n📁 **Location:** `{new_path}`",
+            parse_mode="Markdown"
         )
+        # Show a newly rendered directory immediately.  Previously the old manager
+        # message stayed on screen, which made a successfully-added category look
+        # as if it had not been saved.
+        class FolderListQuery:
+            def __init__(self, message, user):
+                self.message = message
+                self.from_user = user
+                self.id = "0"
+
+            async def answer(self, *args, **kwargs):
+                pass
+
+            async def edit_message_text(self, *args, **kwargs):
+                return await self.message.reply_text(*args, **kwargs)
+
+        await render_admin_folder_directory(FolderListQuery(update.message, update.effective_user), context, parent)
     else:
         keyboard = [
             [InlineKeyboardButton(f"« Back to '{parent or 'All Categories'}'", callback_data=f"adm_dir_{parent}")],
             [InlineKeyboardButton("📂 All Categories", callback_data="adm_categories")]
         ]
+        await update.message.reply_text(
+            f"ℹ️ Folder / category `{text}` already exists in this location.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 async def handle_admin_ebook_subcategory_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
@@ -9660,7 +9792,7 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
 
         k_cancel = [[InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]]
         await wizard_edit_or_reply(context, update,
-            f"📖 কোর্সের নাম: **{course_name}**\n\n💰 **ধাপ ২/৪: কোর্সের মূল্য লিখুন (Price in BDT):**\n\n(যেমন: 400 বা ফ্রি কোর্সের জন্য 0 লিখুন)",
+            f"📘 **Course:** {course_name}\n\n**Step 2 of 4 — Price (BDT)**\nSend the price as a number. Send `0` for a free course.",
             reply_markup=InlineKeyboardMarkup(k_cancel)
         )
 
@@ -9675,10 +9807,10 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
         context.user_data["new_course"] = new_course
         context.user_data["course_step"] = "description"
 
-        price_tag = f"৳{price_val}" if price_val > 0 else "বিনামূল্যে (Free) 🎁"
+        price_tag = f"৳{price_val}" if price_val > 0 else "Free 🎁"
         k_cancel = [[InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]]
         await wizard_edit_or_reply(context, update,
-            f"💰 মূল্য: **{price_tag}**\n\n📝 **ধাপ ৩/৪: কোর্সের বিস্তারিত বিবরণ (Description) লিখুন:**\n\n💡 শিক্ষক প্যানেল, সিলেবাস এবং কোর্সের বিস্তারিত ফিচার্স লিখুন (একাধিক লাইনে লিখতে পারেন):",
+            f"💰 **Price:** {price_tag}\n\n**Step 3 of 4 — Description**\nSend a short course description. You can write multiple lines.",
             reply_markup=InlineKeyboardMarkup(k_cancel)
         )
 
@@ -9696,25 +9828,23 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
         if new_course.get("category") and new_course.get("subcategory"):
             if "access_link" not in new_course:
                 context.user_data["course_step"] = "link"
-                p_text = f"""📁 **ফোল্ডার:** `{new_course['category']}` ➔ `{new_course['subcategory']}`
+                p_text = f"""📁 **Folder:** `{new_course['category']}` ➔ `{new_course['subcategory']}`
 ━━━━━━━━━━━━━━━━━━━━
-🔗 **ধাপ ৪/৪: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
-
-💡 লিংক না থাকলে বা পরে দিতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
+**Step 4 of 4 — Access Link**
+Send the Telegram or Drive link, or tap **Skip Link** to add it later."""
                 k_link = [
-                    [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Link (স্কিপ করুন)", callback_data="adm_skip_link")],
+                    [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Link", callback_data="adm_skip_link")],
                     [InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
                 ]
                 await wizard_edit_or_reply(context, update, p_text, reply_markup=InlineKeyboardMarkup(k_link))
             elif not new_course.get("image"):
                 context.user_data["course_step"] = "image"
-                p_img = f"""📁 **ফোল্ডার:** `{new_course['category']}` ➔ `{new_course['subcategory']}`
+                p_img = f"""📁 **Folder:** `{new_course['category']}` ➔ `{new_course['subcategory']}`
 ━━━━━━━━━━━━━━━━━━━━
-🖼️ **ধাপ ৪/৪: কোর্সের ব্যানার বা ছবি পাঠান:**
-
-💡 ছবি ছাড়া প্রকাশ করতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
+🖼️ **Final step — Banner Image (Optional)**
+Send a photo, or tap **Skip Image** to publish without one."""
                 k_img = [
-                    [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Image (ছবি ছাড়া প্রকাশ)", callback_data="adm_skip_img")],
+                    [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Image", callback_data="adm_skip_img")],
                     [InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
                 ]
                 await wizard_edit_or_reply(context, update, p_img, reply_markup=InlineKeyboardMarkup(k_img))
@@ -9729,13 +9859,12 @@ async def handle_admin_course_creation(update: Update, context: ContextTypes.DEF
                 new_course["subcategory"] = "General"
                 new_course["program"] = "general"
                 context.user_data["course_step"] = "link"
-                p_text = f"""📁 **ক্যাটাগরি:** `{new_course['category']}`
+                p_text = f"""📁 **Folder:** `{new_course['category']}`
 ━━━━━━━━━━━━━━━━━━━━
-🔗 **ধাপ ৪/৪: টেলিগ্রাম প্রাইভেট চ্যানেল বা ড্রাইভ এক্সেস লিংক পাঠান:**
-
-💡 লিংক না থাকলে বা পরে দিতে চাইলে নিচের স্কিপ বাটনে চাপুন:"""
+**Step 4 of 4 — Access Link**
+Send the Telegram or Drive link, or tap **Skip Link** to add it later."""
                 k_link = [
-                    [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Link (স্কিপ করুন)", callback_data="adm_skip_link")],
+                    [InlineKeyboardButton("« Back", callback_data="adm_course_back"), InlineKeyboardButton("⏭️ Skip Link", callback_data="adm_skip_link")],
                     [InlineKeyboardButton("✕ Cancel", callback_data="adm_course_cancel")]
                 ]
                 await wizard_edit_or_reply(context, update, p_text, reply_markup=InlineKeyboardMarkup(k_link))
@@ -10256,11 +10385,18 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Could not set bot description or commands on startup: {e}")
 
+
+async def handle_application_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log unexpected updates without leaving python-telegram-bot unhandled."""
+    logger.error("Unhandled Telegram update", exc_info=context.error)
+
+
 def main():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    app.add_error_handler(handle_application_error)
 
     # Commands
     app.add_handler(CommandHandler("start", start))

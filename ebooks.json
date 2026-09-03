@@ -32,5 +32,16 @@
     "price": 200,
     "description": "প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।",
     "id": "EB-1788247476"
+  },
+  "EB-1788439019": {
+    "category": "💼 Job Preparation",
+    "subcategory": "General",
+    "folder_path": "💼 Job Preparation",
+    "name": "Ntrca",
+    "price": 50,
+    "description": "প্রিমিয়াম ই-বুক ও স্টাডি মেটেরিয়াল।",
+    "file_id": "BQACAgUAAxkBAAIdGWqZaeTG3sa5LHq2jkHjI3EJR21gAAKsIQAC6UPJVGdGkVp0DJsePQQ",
+    "file_name": "Solution 2nd Paper (Edi-25) (1).pdf",
+    "id": "EB-1788439019"
   }
 }

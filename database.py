@@ -2351,24 +2351,40 @@ class Database:
         self._save_raw(keyboards, KEYBOARDS_DB)
 
     def move_course_order(self, course_id: str, direction: str) -> bool:
-        keys = list(self.courses.keys())
-        if course_id not in keys:
+        if course_id not in self.courses:
             return False
-        idx = keys.index(course_id)
+
+        def folder_key(course: dict) -> str:
+            folder = str(course.get("folder_path", "")).strip().replace(" / ", " > ").replace("/", " > ")
+            if folder:
+                return folder.lower()
+            category = str(course.get("category", "")).strip()
+            subcategory = str(course.get("subcategory", "")).strip()
+            return (category if not subcategory or subcategory.lower() == "general" else f"{category} > {subcategory}").lower()
+
+        # Only reorder sibling courses in this directory.  Moving a course should
+        # never change the relative order of courses in a different category.
+        current_folder = folder_key(self.courses[course_id])
+        sibling_ids = [cid for cid, course in self.courses.items() if folder_key(course) == current_folder]
+        idx = sibling_ids.index(course_id)
         if direction == "up":
             if idx == 0:
                 return False
-            keys[idx], keys[idx-1] = keys[idx-1], keys[idx]
+            other_id = sibling_ids[idx - 1]
         elif direction == "down":
-            if idx == len(keys) - 1:
+            if idx == len(sibling_ids) - 1:
                 return False
-            keys[idx], keys[idx+1] = keys[idx+1], keys[idx]
+            other_id = sibling_ids[idx + 1]
         else:
             return False
 
+        keys = list(self.courses.keys())
+        current_index = keys.index(course_id)
+        other_index = keys.index(other_id)
+        keys[current_index], keys[other_index] = keys[other_index], keys[current_index]
         new_courses = {}
-        for k in keys:
-            new_courses[k] = self.courses[k]
+        for cid in keys:
+            new_courses[cid] = self.courses[cid]
         self.courses = new_courses
         self._save(self.courses, COURSES_DB)
         return True
@@ -2791,4 +2807,3 @@ class Database:
                     b["type"] = btn_type.strip().lower()
                 return self.save_info_settings(cfg)
         return False
-
